@@ -29,6 +29,6 @@ public class SecurityConfig {
     public GSKartResourceServerUserContext gsKartResourceServerUserContext() {
         GSKartResourceServerUserContext userContext = new GSKartResourceServerUserContext();
         userContext.setGskartResourceServerUser(new GSKartResourceServerUser());
-        return new GSKartResourceServerUserContext();
+        return userContext;
     }
 }

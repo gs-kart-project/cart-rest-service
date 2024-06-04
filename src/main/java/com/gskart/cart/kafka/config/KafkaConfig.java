@@ -1,26 +1,32 @@
 package com.gskart.cart.kafka.config;
 
-import com.fasterxml.jackson.databind.ser.std.StringSerializer;
 import com.gskart.cart.kafka.constants.KafkaConstants;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.common.serialization.StringDeserializer;
+import org.apache.kafka.common.serialization.StringSerializer;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.kafka.annotation.EnableKafka;
+import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
+import org.springframework.kafka.config.KafkaListenerContainerFactory;
 import org.springframework.kafka.config.TopicBuilder;
-import org.springframework.kafka.core.DefaultKafkaProducerFactory;
-import org.springframework.kafka.core.KafkaAdmin;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.core.ProducerFactory;
+import org.springframework.kafka.core.*;
+import org.springframework.kafka.listener.*;
+import org.springframework.kafka.support.serializer.JsonDeserializer;
 import org.springframework.kafka.support.serializer.JsonSerializer;
+import org.springframework.util.backoff.FixedBackOff;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 @Configuration
+@EnableKafka
 public class KafkaConfig {
 
 
@@ -67,4 +73,42 @@ public class KafkaConfig {
         return new KafkaTemplate<>(producerFactory);
     }
 
+    @Bean
+    public ConsumerFactory<String, Object> consumerFactory() {
+        Map<String, Object> consumerProps = new HashMap<>();
+        consumerProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaBootstrapServers);
+        consumerProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        consumerProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, JsonDeserializer.class);
+        consumerProps.put(JsonSerializer.TYPE_MAPPINGS,  "cart:com.gskart.cart.redis.entities.Cart");
+        return new DefaultKafkaConsumerFactory<>(consumerProps);
+    }
+
+    @Bean
+    public KafkaListenerContainerFactory<ConcurrentMessageListenerContainer<String, Object>>
+    kafkaListenerContainerFactory(
+        ConsumerFactory<String, Object> consumerFactory,
+        DefaultErrorHandler defaultErrorHandler) {
+        ConcurrentKafkaListenerContainerFactory<String, Object> factory = new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(consumerFactory);
+        factory.getContainerProperties().setPollTimeout(3000);
+        factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.RECORD);
+        factory.setCommonErrorHandler(defaultErrorHandler);
+        return factory;
+    }
+
+
+    /**
+     * DefaultErrorHandler instance is created with processing attempts of 5 (1 Initials Delivery + 4 retries).
+     * @return DefaultErrorHandler
+     */
+    @Bean
+    public DefaultErrorHandler defaultErrorHandler(KafkaTemplate<String, Object> kafkaTemplate){
+        long interval = 60 * 1000L;
+        DeadLetterPublishingRecoverer deadLetterPublishingRecoverer = new DeadLetterPublishingRecoverer(kafkaTemplate);
+        DefaultErrorHandler defaultErrorHandler = new DefaultErrorHandler(
+                deadLetterPublishingRecoverer,
+            new FixedBackOff(interval, 4)
+        );
+        return defaultErrorHandler;
+    }
 }

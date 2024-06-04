@@ -6,7 +6,7 @@ import java.util.List;
 
 @Data
 public class DeliveryDetails {
-    private List<Contact> contacts;
-    private Address billingAddress;
-    private Address shippingAddress;
+    private Contact billingContact;
+    private Contact shippingContact;
+    private List<Contact> secondaryContacts;
 }

@@ -1,7 +1,10 @@
 package com.gskart.cart.mappers;
 
 import com.gskart.cart.DTOs.requests.CartRequest;
+import com.gskart.cart.DTOs.requests.ContactRequest;
+import com.gskart.cart.DTOs.requests.ContactType;
 import com.gskart.cart.DTOs.response.CartResponse;
+import com.gskart.cart.data.entities.Contact;
 import com.gskart.cart.redis.entities.Cart;
 import org.springframework.stereotype.Component;
 
@@ -27,22 +30,44 @@ public class CartMapper {
 
     public Cart cartDbToCartCacheEntity(com.gskart.cart.data.entities.Cart dbCart){
         Cart cart = new Cart();
-        cart.setId(dbCart.getId());
+        cart.setMongoObjectId(dbCart.getId());
         cart.setProductItems(dbCart.getProductItems());
         cart.setPaymentDetails(dbCart.getPaymentDetails());
         cart.setStatus(dbCart.getStatus());
         cart.setOrderDetails(dbCart.getOrderDetails());
         cart.setDeliveryDetails(dbCart.getDeliveryDetails());
+        cart.setCartUsername(dbCart.getCartUsername());
+        cart.setCreatedBy(dbCart.getCreatedBy());
+        cart.setCreatedOn(dbCart.getCreatedOn());
+        cart.setModifiedBy(dbCart.getModifiedBy());
+        cart.setModifiedOn(dbCart.getModifiedOn());
         return cart;
     }
 
     public com.gskart.cart.data.entities.Cart cartCacheToDbEntity(Cart cart) {
         com.gskart.cart.data.entities.Cart cartDbEntity = new com.gskart.cart.data.entities.Cart();
-        cartDbEntity.setId(cart.getId());
+        cartDbEntity.setId(cart.getMongoObjectId());
         cartDbEntity.setProductItems(cart.getProductItems());
         cartDbEntity.setPaymentDetails(cart.getPaymentDetails());
         cartDbEntity.setOrderDetails(cart.getOrderDetails());
         cartDbEntity.setDeliveryDetails(cart.getDeliveryDetails());
+        cartDbEntity.setStatus(cart.getStatus());
+        cartDbEntity.setCartUsername(cart.getCartUsername());
+        cartDbEntity.setCreatedBy(cart.getCreatedBy());
+        cartDbEntity.setCreatedOn(cart.getCreatedOn());
+        cartDbEntity.setModifiedBy(cart.getModifiedBy());
+        cartDbEntity.setModifiedOn(cart.getModifiedOn());
         return cartDbEntity;
+    }
+
+    public Contact contactRequestToContact(ContactRequest contactRequest) {
+        Contact contact = new Contact();
+        contact.setContactEmailIds(contactRequest.getContactEmailIds());
+        contact.setAddresses(contactRequest.getAddresses());
+        contact.setPhoneNumbers(contactRequest.getPhoneNumbers());
+        contact.setFirstName(contactRequest.getFirstName());
+        contact.setLastName(contactRequest.getLastName());
+        contact.setId(contactRequest.getId());
+        return contact;
     }
 }

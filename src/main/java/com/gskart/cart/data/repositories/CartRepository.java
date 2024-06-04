@@ -7,6 +7,7 @@ import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Repository;
 
+import java.util.Date;
 import java.util.List;
 import java.util.Optional;
 
@@ -14,7 +15,7 @@ import static org.springframework.data.mongodb.core.query.Criteria.where;
 import static org.springframework.data.mongodb.core.query.Query.query;
 import static org.springframework.data.mongodb.core.query.Update.update;
 
-@Repository
+@Repository("cartDbRepository")
 public class CartRepository implements ICartRepository {
     private final MongoTemplate mongoTemplate;
 
@@ -31,17 +32,19 @@ public class CartRepository implements ICartRepository {
 
     @Override
     public Cart save(Cart cart) {
-        this.mongoTemplate.insert(cart);
+        cart = this.mongoTemplate.insert(cart);
         return cart;
     }
 
     @Override
     public Cart update(Cart cart) {
-        Update updateDefinition = Update.update("productItems", cart.getProductItems())
-                .update("status", cart.getStatus())
-                .update("paymentDetails", cart.getPaymentDetails())
-                .update("orderDetails", cart.getOrderDetails())
-                .update("deliveryDetails", cart.getDeliveryDetails());
+        Update updateDefinition = new Update().set("productItems", cart.getProductItems())
+                .set("status", cart.getStatus())
+                .set("paymentDetails", cart.getPaymentDetails())
+                .set("orderDetails", cart.getOrderDetails())
+                .set("deliveryDetails", cart.getDeliveryDetails())
+                .set("modifiedBy", cart.getModifiedBy())
+                .set("modifiedOn", cart.getModifiedOn());
 
        Cart updatedCart = this.mongoTemplate.update(Cart.class)
                .matching(query(where("_id").is(cart.getId())))
@@ -58,11 +61,12 @@ public class CartRepository implements ICartRepository {
     }
 
     @Override
-    public Optional<Cart> findByUsernameAndStatus(String username, CartStatus status) {
+    public Optional<Cart> findByUsernameAndStatusIsNot(String username, CartStatus status) {
         Cart cart = this.mongoTemplate.findOne(
                 query(
-                    where("username").is(username)
-                        .andOperator(where("status").is(status))),
+                    where("cartUsername")
+                        .is(username)
+                        .andOperator(where("status").ne(status))),
                 Cart.class);
 
         return Optional.ofNullable(cart);

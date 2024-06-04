@@ -13,7 +13,7 @@ public interface ICartRepository {
 
     Optional<Cart> findById(String id);
 
-    Optional<Cart> findByUsernameAndStatus(String username, CartStatus status);
+    Optional<Cart> findByUsernameAndStatusIsNot(String username, CartStatus status);
 
     List<Cart> findAll();
 
