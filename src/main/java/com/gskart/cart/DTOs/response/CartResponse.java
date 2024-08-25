@@ -7,10 +7,12 @@ import com.gskart.cart.data.entities.OrderDetails;
 import com.gskart.cart.data.entities.PaymentDetails;
 import lombok.Data;
 
+import java.util.List;
+
 @Data
 public class CartResponse extends CartRequest {
     CartStatus status;
     PaymentDetails paymentDetails;
     OrderDetails orderDetails;
-    DeliveryDetails deliveryDetails;
+    List<DeliveryDetails> deliveryDetails;
 }

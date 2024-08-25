@@ -1,12 +1,11 @@
 package com.gskart.cart.services;
 
+import com.gskart.cart.DTOs.orderService.requests.OrderRequest;
 import com.gskart.cart.DTOs.requests.ContactType;
-import com.gskart.cart.data.entities.CartStatus;
-import com.gskart.cart.data.entities.Contact;
-import com.gskart.cart.data.entities.DeliveryDetails;
-import com.gskart.cart.data.entities.ProductItem;
+import com.gskart.cart.data.entities.*;
 import com.gskart.cart.data.repositories.ICartRepository;
 import com.gskart.cart.exceptions.CartNotFoundException;
+import com.gskart.cart.exceptions.DeleteCartException;
 import com.gskart.cart.exceptions.UpdateCartException;
 import com.gskart.cart.kafka.constants.KafkaConstants;
 import com.gskart.cart.mappers.CartMapper;
@@ -15,6 +14,7 @@ import com.gskart.cart.redis.repositories.CartRepository;
 import com.gskart.cart.security.models.GSKartResourceServerUserContext;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.data.mongodb.core.aggregation.BooleanOperators;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
@@ -60,6 +60,13 @@ public class CartService implements ICartService {
         cart.setStatus(CartStatus.CREATED);
         cart.setCartUsername(resourceServerUserContext.getGskartResourceServerUser().getUsername());
         cart.setCreatedBy(resourceServerUserContext.getGskartResourceServerUser().getUsername());
+        // create delivery details
+        if(cart.getDeliveryDetails() == null){
+            DeliveryDetails deliveryDetails = new DeliveryDetails();
+            deliveryDetails.setId((short) 1);
+            deliveryDetails.setProductIds(cart.getProductItems().stream().map(ProductItem::getProductId).toList());
+            cart.setDeliveryDetails(new ArrayList<>(){{add(deliveryDetails);}});
+        }
 //        cart.setTtl(cartTTLMins);
         Cart savedCart = cartCacheRepository.save(cart);
         saveCartInDb(savedCart);
@@ -71,6 +78,13 @@ public class CartService implements ICartService {
         Cart cart = getCartById(cartId);
         List<ProductItem> productItemListExisting = cart.getProductItems();
         productItemListExisting.addAll(productItemList);
+        if(cart.getDeliveryDetails() != null){
+            Optional<DeliveryDetails> deliveryDetailsOptional = cart.getDeliveryDetails().stream().filter(dd-> dd.getId().equals((short)1)).findFirst();
+            if(deliveryDetailsOptional.isPresent()){
+                DeliveryDetails deliveryDetails = deliveryDetailsOptional.get();
+                deliveryDetails.getProductIds().addAll(cart.getProductItems().stream().map(ProductItem::getProductId).toList());
+            }
+        }
 //        cart.setTtl(cartTTLMins);
         cartCacheRepository.save(cart);
         return true;
@@ -85,6 +99,14 @@ public class CartService implements ICartService {
                     .filter(pri->pri.getProductId().equals(productItem.getProductId()))
                     .findFirst().ifPresent(productItemListExisting::remove);
             productItemListExisting.add(productItem);
+        }
+        if(cart.getDeliveryDetails() != null){
+            Optional<DeliveryDetails> deliveryDetailsOptional = cart.getDeliveryDetails().stream().filter(dd-> dd.getId().equals((short)1)).findFirst();
+            if(deliveryDetailsOptional.isPresent()){
+                DeliveryDetails deliveryDetails = deliveryDetailsOptional.get();
+                deliveryDetails.getProductIds().clear();
+                deliveryDetails.getProductIds().addAll(cart.getProductItems().stream().map(ProductItem::getProductId).toList());
+            }
         }
         cart.setStatus(CartStatus.APPENDED);
         cart.setModifiedBy(resourceServerUserContext.getGskartResourceServerUser().getUsername());
@@ -162,24 +184,40 @@ public class CartService implements ICartService {
     }
 
     @Override
-    public boolean updateDeliveryContact(String cartId, Contact contact, ContactType contactType) throws CartNotFoundException, UpdateCartException {
+    public boolean updateDeliveryContact(String cartId, Short deliveryDetailId, Contact contact, ContactType contactType) throws CartNotFoundException, UpdateCartException {
         Cart cart = getCartById(cartId);
 
         if(contact.getId() == null || contact.getId() == 0){
             throw new UpdateCartException(String.format("Cart id:%s. Cannot add secondary contact without Id.", cartId));
         }
 
+        DeliveryDetails deliveryDetailsToUpdate = null;
         if(cart.getDeliveryDetails() == null){
-            DeliveryDetails deliveryDetails = new DeliveryDetails();
-            deliveryDetails.setSecondaryContacts(new ArrayList<>());
-            cart.setDeliveryDetails(new DeliveryDetails());
+            cart.setDeliveryDetails(new ArrayList<>());
+            deliveryDetailsToUpdate = new DeliveryDetails();
+            deliveryDetailsToUpdate.setId((short) 1);
+            deliveryDetailsToUpdate.setSecondaryContacts(new ArrayList<>());
+            cart.getDeliveryDetails().add(deliveryDetailsToUpdate);
+        }
+
+        if(!cart.getDeliveryDetails().isEmpty()){
+            var deliveryDetailOptional = cart.getDeliveryDetails().stream().filter(deliveryDetails -> deliveryDetails.getId().equals(deliveryDetailId)).findFirst();
+            if(deliveryDetailOptional.isPresent()){
+                deliveryDetailsToUpdate = deliveryDetailOptional.get();
+            }
+            else {
+                throw new UpdateCartException(String.format("Cart id:%s. Cannot ascertain the delivery details to update contact. Check the delivery Id", cartId));
+            }
         }
 
         switch(contactType){
-            case BILLING -> cart.getDeliveryDetails().setBillingContact(contact);
-            case SHIPPING -> cart.getDeliveryDetails().setShippingContact(contact);
+            case BILLING -> deliveryDetailsToUpdate.setBillingContact(contact);
+            case SHIPPING -> deliveryDetailsToUpdate.setShippingContact(contact);
             case SECONDARY ->{
-                Optional<Contact> secondaryContactOptional = cart.getDeliveryDetails().getSecondaryContacts()
+                if(deliveryDetailsToUpdate.getSecondaryContacts() == null){
+                    deliveryDetailsToUpdate.setSecondaryContacts(new ArrayList<>());
+                }
+                Optional<Contact> secondaryContactOptional = deliveryDetailsToUpdate.getSecondaryContacts()
                         .stream()
                         .filter(existingContact -> Objects.equals(existingContact.getId(), contact.getId()))
                         .findFirst();
@@ -192,7 +230,7 @@ public class CartService implements ICartService {
                     secondaryContact.setAddresses(contact.getAddresses());
                 }
                 else {
-                    cart.getDeliveryDetails().getSecondaryContacts().add(contact);
+                    deliveryDetailsToUpdate.getSecondaryContacts().add(contact);
                 }
             }
         }
@@ -207,15 +245,23 @@ public class CartService implements ICartService {
     }
 
     @Override
-    public boolean deleteContact(String cartId, Short contactId, ContactType contactType) throws CartNotFoundException, UpdateCartException {
+    public boolean deleteContact(String cartId, Short deliveryDetailId, Short contactId, ContactType contactType) throws CartNotFoundException, UpdateCartException, DeleteCartException {
         Cart cart = getCartById(cartId);
+        if(cart.getDeliveryDetails() == null){
+            throw new DeleteCartException(String.format("Delivery details doesn't exist for cart: %s", cart.getId()));
+        }
+        DeliveryDetails deliveryDetailsToUpdate = cart.getDeliveryDetails().stream().filter(dd -> dd.getId().equals(deliveryDetailId)).findFirst().orElse(null);
+        if(deliveryDetailsToUpdate == null){
+            throw new DeleteCartException(String.format("Delivery details doesn't exist for cart: %s", cart.getId()));
+        }
+
         switch(contactType){
-            case BILLING -> cart.getDeliveryDetails().setBillingContact(null);
-            case SHIPPING -> cart.getDeliveryDetails().setShippingContact(null);
+            case BILLING -> deliveryDetailsToUpdate.setBillingContact(null);
+            case SHIPPING -> deliveryDetailsToUpdate.setShippingContact(null);
             case SECONDARY -> {
-               Optional<Contact> secondaryContactOptional = cart.getDeliveryDetails().getSecondaryContacts().stream().filter(existingContact -> Objects.equals(existingContact.getId(), contactId)).findFirst();
+               Optional<Contact> secondaryContactOptional = deliveryDetailsToUpdate.getSecondaryContacts().stream().filter(existingContact -> Objects.equals(existingContact.getId(), contactId)).findFirst();
                if(secondaryContactOptional.isPresent()){
-                   cart.getDeliveryDetails().getSecondaryContacts().remove(secondaryContactOptional.get());
+                   deliveryDetailsToUpdate.getSecondaryContacts().remove(secondaryContactOptional.get());
                }
                else {
                    throw new UpdateCartException(String.format("Secondary contact with Id: %d does not exist in the Cart: %s.", contactId, cartId));
@@ -242,5 +288,126 @@ public class CartService implements ICartService {
     Once create new order is success
         1. Update cart with order details
      */
+    public String checkout(String cartId) throws CartNotFoundException, UpdateCartException {
+        Cart cart = getCartById(cartId);
+        // At least 1 product should exist in the cart
+        if(cart.getProductItems() == null || cart.getProductItems().isEmpty()){
+            throw new UpdateCartException(String.format("Cart %s cannot be checked out as there are no products selected", cartId));
+        }
+
+        // Delivery details must be present
+        if(cart.getDeliveryDetails() == null || cart.getDeliveryDetails().isEmpty()){
+            throw new UpdateCartException(String.format("Cart %s cannot be checked out. Delivery details are not updated", cartId));
+        }
+
+        // Check if Billing and Shipping contacts have been updated
+        StringBuilder billingContactsMissingIds = new StringBuilder();
+        StringBuilder shippingContactsMissingIds = new StringBuilder();
+        StringBuilder productIdsMissingIds = new StringBuilder();
+        for(DeliveryDetails deliveryDetails : cart.getDeliveryDetails()){
+            if(deliveryDetails.getBillingContact() == null){
+               appendToStringWithComma(billingContactsMissingIds, deliveryDetails.getId().toString());
+            }
+
+            if(deliveryDetails.getShippingContact() == null){
+               appendToStringWithComma(shippingContactsMissingIds, deliveryDetails.getId().toString());
+            }
+
+            if(deliveryDetails.getProductIds() == null){
+                appendToStringWithComma(productIdsMissingIds, deliveryDetails.getId().toString());
+            }
+        }
+
+
+
+        StringBuilder exceptionMessage = new StringBuilder();
+        if(!billingContactsMissingIds.isEmpty()){
+            exceptionMessage.append(String.format("Billing contacts missing in delivery details ids: %s", billingContactsMissingIds));
+        }
+        if(!shippingContactsMissingIds.isEmpty()){
+            exceptionMessage.append(String.format("Shipping contacts missing in delivery details ids: %s", shippingContactsMissingIds));
+        }
+        if(!productIdsMissingIds.isEmpty()){
+            exceptionMessage.append(String.format("Product ids missing in delivery details ids: %s", productIdsMissingIds));
+        }
+
+        if(!exceptionMessage.isEmpty()){
+            exceptionMessage.insert(0, String.format("Cart %s cannot be checked out. ", cartId));
+            throw new UpdateCartException(exceptionMessage.toString());
+        }
+
+        cart.setStatus(CartStatus.CHECKED_OUT);
+        cart.setModifiedBy(resourceServerUserContext.getGskartResourceServerUser().getUsername());
+        cart.setModifiedOn(OffsetDateTime.now(ZoneOffset.UTC));
+        cartCacheRepository.save(cart);
+        // Save cart in Db (Kafka)
+        saveCartInDb(cart);
+
+        // Place Order (Order service call via Kafka topic)
+        placeOrder(cart);
+
+        return cart.getId();
+    }
+
+    private void appendToStringWithComma(StringBuilder stringBuilder, String value){
+        if(!stringBuilder.isEmpty()){
+            stringBuilder.append(", ");
+        }
+        stringBuilder.append(value);
+    }
+
+    private void placeOrder(Cart cart){
+        OrderRequest orderRequest = cartMapper.cartRedisEntityToOrderRequest(cart);
+        final ProducerRecord<String, Object> placeOrderProducerRecord= new ProducerRecord<>(KafkaConstants.Topic.ORDER_PLACE, orderRequest.getCartId(), orderRequest);
+        CompletableFuture<SendResult<String, Object>> placeOrderFuture = kafkaTemplate.send(placeOrderProducerRecord);
+        placeOrderFuture.whenComplete((result, ex) -> {
+            if(ex != null){
+                System.out.printf("Couldn't place order for cart %s. Error occurred while sending Order Request to Topic %s", cart.getId(), KafkaConstants.Topic.ORDER_PLACE);
+                ex.printStackTrace();
+                OrderDetails orderDetails = new OrderDetails();
+                orderDetails.setOrderStatus(OrderStatus.COULD_NOT_PLACE_ORDER);
+                try {
+                    updateOrderDetails(cart.getId(), orderDetails);
+                } catch (CartNotFoundException e) {
+                    e.printStackTrace();
+                }
+                return;
+            }
+            System.out.printf("Order successfully placed for cart: %s", cart.getId());
+        });
+    }
+
+    public Cart updateOrderDetails(String cartId, OrderDetails orderDetails) throws CartNotFoundException {
+        Cart cart = getCartById(cartId);
+        if(cart.getOrderDetails() == null){
+            cart.setOrderDetails(orderDetails);
+        }
+        else {
+            cart.getOrderDetails().setOrderId(orderDetails.getOrderId());
+            cart.getOrderDetails().setOrderStatus(orderDetails.getOrderStatus());
+        }
+        cart.setModifiedBy(resourceServerUserContext.getGskartResourceServerUser().getUsername());
+        cart.setModifiedOn(OffsetDateTime.now(ZoneOffset.UTC));
+        cartCacheRepository.save(cart);
+        saveCartInDb(cart);
+        return cart;
+    }
+
+    public Cart updatePaymentDetails(String cartId, PaymentDetails paymentDetails) throws CartNotFoundException {
+        Cart cart = getCartById(cartId);
+        if(cart.getPaymentDetails() == null){
+            cart.setPaymentDetails(paymentDetails);
+        }
+        else{
+            cart.getPaymentDetails().setPaymentId(paymentDetails.getPaymentId());
+            cart.getPaymentDetails().setPaymentStatus(paymentDetails.getPaymentStatus());
+        }
+
+        cart.setModifiedBy(resourceServerUserContext.getGskartResourceServerUser().getUsername());
+        cart.setModifiedOn(OffsetDateTime.now(ZoneOffset.UTC));
+        cartCacheRepository.save(cart);
+        saveCartInDb(cart);
+        return cart;
+    }
 
 }

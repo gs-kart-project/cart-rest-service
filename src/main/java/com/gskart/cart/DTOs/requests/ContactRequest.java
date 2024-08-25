@@ -15,4 +15,5 @@ public class ContactRequest {
     private List<Address> addresses;
     private ContactType contactType;
     private Short id;
+    private Short deliveryDetailId;
 }

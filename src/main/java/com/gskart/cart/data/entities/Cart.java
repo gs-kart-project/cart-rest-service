@@ -16,5 +16,5 @@ public class Cart extends BaseEntity {
     CartStatus status;
     PaymentDetails paymentDetails;
     OrderDetails orderDetails;
-    DeliveryDetails deliveryDetails;
+    List<DeliveryDetails> deliveryDetails;
 }

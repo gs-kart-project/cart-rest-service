@@ -1,7 +1,6 @@
 package com.gskart.cart.kafka.config;
 
 import com.gskart.cart.kafka.constants.KafkaConstants;
-import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -51,7 +50,7 @@ public class KafkaConfig {
 
     @Bean("createOrderTopic")
     public NewTopic createOrderTopic() {
-        return TopicBuilder.name(KafkaConstants.Topic.ORDER_CREATE)
+        return TopicBuilder.name(KafkaConstants.Topic.ORDER_PLACE)
                 .partitions(1)
                 .replicas(1)
                 .build();
@@ -79,7 +78,7 @@ public class KafkaConfig {
         consumerProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaBootstrapServers);
         consumerProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         consumerProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, JsonDeserializer.class);
-        consumerProps.put(JsonSerializer.TYPE_MAPPINGS,  "cart:com.gskart.cart.redis.entities.Cart");
+        consumerProps.put(JsonSerializer.TYPE_MAPPINGS,  "cart:com.gskart.cart.redis.entities.Cart, cart:com.gskart.cart.DTOs.orderService.requests.OrderRequest");
         return new DefaultKafkaConsumerFactory<>(consumerProps);
     }
 

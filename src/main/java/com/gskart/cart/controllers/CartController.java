@@ -7,6 +7,7 @@ import com.gskart.cart.DTOs.response.CartResponse;
 import com.gskart.cart.data.entities.Contact;
 import com.gskart.cart.data.entities.ProductItem;
 import com.gskart.cart.exceptions.CartNotFoundException;
+import com.gskart.cart.exceptions.DeleteCartException;
 import com.gskart.cart.exceptions.UpdateCartException;
 import com.gskart.cart.mappers.CartMapper;
 import com.gskart.cart.redis.entities.Cart;
@@ -80,12 +81,24 @@ public class CartController {
         }
     }
 
+    @DeleteMapping("{cartId}/Products")
+    public ResponseEntity<Boolean> deleteProductsInCart(@PathVariable String cartId, @RequestBody List<Integer> productIdList) {
+        try{
+            boolean isDeleteSucceeded = cartService.deleteProductsFromCart(cartId, productIdList);
+            return ResponseEntity.ok(isDeleteSucceeded);
+        }
+        catch (CartNotFoundException e) {
+            e.printStackTrace();
+            return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
+        }
+    }
+
     @PutMapping("/{cartId}/contacts")
     // Endpoint to add contact
     public ResponseEntity<Boolean> updateContact(@PathVariable String cartId, @RequestBody ContactRequest contactRequest){
         try {
             Contact contact = cartMapper.contactRequestToContact(contactRequest);
-            cartService.updateDeliveryContact(cartId, contact, contactRequest.getContactType());
+            cartService.updateDeliveryContact(cartId, contactRequest.getDeliveryDetailId(), contact, contactRequest.getContactType());
             return ResponseEntity.ok(true);
         } catch (CartNotFoundException | UpdateCartException e) {
             e.printStackTrace();
@@ -93,18 +106,25 @@ public class CartController {
         }
     }
 
-    @DeleteMapping("/{cartId}/contacts/{contactId}")
-    public ResponseEntity<Boolean> deleteContact(@PathVariable String cartId, @PathVariable Short contactId, @RequestParam ContactType contactType) {
+    @DeleteMapping("/{cartId}/contacts")
+    public ResponseEntity<Boolean> deleteContact(@PathVariable String cartId, Short deliveryDetailId, Short contactId, @RequestParam ContactType contactType) {
         try{
-            cartService.deleteContact(cartId, contactId, contactType);
+            cartService.deleteContact(cartId, deliveryDetailId, contactId, contactType);
             return ResponseEntity.ok(true);
-        } catch (UpdateCartException | CartNotFoundException e) {
+        } catch (UpdateCartException | CartNotFoundException | DeleteCartException e) {
             e.printStackTrace();
             return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
         }
     }
 
-    // Endpoint to check out
-
-    //
+    @PutMapping("/{cartId}/checkout")
+    public ResponseEntity<String> checkoutCart(@PathVariable String cartId){
+        try {
+            cartService.checkout(cartId);
+            return ResponseEntity.ok(String.format("Cart %s checked out successfully",cartId));
+        } catch (CartNotFoundException | UpdateCartException e) {
+            e.printStackTrace();
+            return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
+        }
+    }
 }
