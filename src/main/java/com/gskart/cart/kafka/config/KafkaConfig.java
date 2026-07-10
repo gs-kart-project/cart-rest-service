@@ -16,8 +16,8 @@ import org.springframework.kafka.config.KafkaListenerContainerFactory;
 import org.springframework.kafka.config.TopicBuilder;
 import org.springframework.kafka.core.*;
 import org.springframework.kafka.listener.*;
-import org.springframework.kafka.support.serializer.JsonDeserializer;
-import org.springframework.kafka.support.serializer.JsonSerializer;
+import org.springframework.kafka.support.serializer.JacksonJsonDeserializer;
+import org.springframework.kafka.support.serializer.JacksonJsonSerializer;
 import org.springframework.util.backoff.FixedBackOff;
 
 import java.util.HashMap;
@@ -61,9 +61,9 @@ public class KafkaConfig {
         Map<String, Object> producerProps = new HashMap<>();
         producerProps.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaBootstrapServers);
         producerProps.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
-        producerProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class);
-        producerProps.put(JsonSerializer.TYPE_MAPPINGS,
-                "cart:com.gskart.cart.redis.entities.Cart");
+        producerProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JacksonJsonSerializer.class);
+        producerProps.put(JacksonJsonSerializer.TYPE_MAPPINGS,
+                "cart:com.gskart.cart.redis.entities.Cart,orderRequest:com.gskart.cart.DTOs.orderService.requests.OrderRequest");
         return new DefaultKafkaProducerFactory<>(producerProps);
     }
 
@@ -77,8 +77,8 @@ public class KafkaConfig {
         Map<String, Object> consumerProps = new HashMap<>();
         consumerProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaBootstrapServers);
         consumerProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
-        consumerProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, JsonDeserializer.class);
-        consumerProps.put(JsonSerializer.TYPE_MAPPINGS,  "cart:com.gskart.cart.redis.entities.Cart, cart:com.gskart.cart.DTOs.orderService.requests.OrderRequest");
+        consumerProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, JacksonJsonDeserializer.class);
+        consumerProps.put(JacksonJsonDeserializer.TYPE_MAPPINGS,  "cart:com.gskart.cart.redis.entities.Cart,orderRequest:com.gskart.cart.DTOs.orderService.requests.OrderRequest");
         return new DefaultKafkaConsumerFactory<>(consumerProps);
     }
 

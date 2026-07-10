@@ -13,12 +13,14 @@ import com.gskart.cart.mappers.CartMapper;
 import com.gskart.cart.redis.entities.Cart;
 import com.gskart.cart.security.models.GSKartResourceServerUserContext;
 import com.gskart.cart.services.CartService;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
+@Slf4j
 @RestController
 @RequestMapping("/carts")
 public class CartController {
@@ -35,7 +37,7 @@ public class CartController {
     @PostMapping("")
     public ResponseEntity<CartResponse> addCart(@RequestBody CartRequest cartRequest) {
         if(cartRequest == null || cartRequest.getProductItems() == null || cartRequest.getProductItems().isEmpty()) {
-            System.out.println("Cart request is not as expected.");
+            log.warn("Cart request is not as expected.");
             return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
         }
         Cart cart = cartMapper.cartRequestToCart(cartRequest);
@@ -50,7 +52,7 @@ public class CartController {
             return ResponseEntity.ok(cartMapper.cartToCartResponse(cart));
 
         } catch (CartNotFoundException e) {
-            e.printStackTrace();
+            log.error("Failed to fetch cart {}.", cartId, e);
             return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
         }
     }
@@ -76,7 +78,7 @@ public class CartController {
             boolean productAdded = cartService.updateProductsInCart(cartId, productItemList);
             return ResponseEntity.ok(productAdded);
         } catch (CartNotFoundException e) {
-            e.printStackTrace();
+            log.error("Failed to update products in cart {}.", cartId, e);
             return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
         }
     }
@@ -88,7 +90,7 @@ public class CartController {
             return ResponseEntity.ok(isDeleteSucceeded);
         }
         catch (CartNotFoundException e) {
-            e.printStackTrace();
+            log.error("Failed to delete products from cart {}.", cartId, e);
             return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
         }
     }
@@ -101,7 +103,7 @@ public class CartController {
             cartService.updateDeliveryContact(cartId, contactRequest.getDeliveryDetailId(), contact, contactRequest.getContactType());
             return ResponseEntity.ok(true);
         } catch (CartNotFoundException | UpdateCartException e) {
-            e.printStackTrace();
+            log.error("Failed to update contact for cart {}.", cartId, e);
             return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
         }
     }
@@ -112,7 +114,7 @@ public class CartController {
             cartService.deleteContact(cartId, deliveryDetailId, contactId, contactType);
             return ResponseEntity.ok(true);
         } catch (UpdateCartException | CartNotFoundException | DeleteCartException e) {
-            e.printStackTrace();
+            log.error("Failed to delete contact for cart {}.", cartId, e);
             return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
         }
     }
@@ -123,7 +125,7 @@ public class CartController {
             cartService.checkout(cartId);
             return ResponseEntity.ok(String.format("Cart %s checked out successfully",cartId));
         } catch (CartNotFoundException | UpdateCartException e) {
-            e.printStackTrace();
+            log.error("Failed to checkout cart {}.", cartId, e);
             return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
         }
     }
