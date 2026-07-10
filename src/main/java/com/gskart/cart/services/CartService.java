@@ -12,6 +12,7 @@ import com.gskart.cart.mappers.CartMapper;
 import com.gskart.cart.redis.entities.Cart;
 import com.gskart.cart.redis.repositories.CartRepository;
 import com.gskart.cart.security.models.GSKartResourceServerUserContext;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.mongodb.core.aggregation.BooleanOperators;
@@ -25,6 +26,7 @@ import java.time.ZoneOffset;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 
+@Slf4j
 @Service
 public class CartService implements ICartService {
     private final CartRepository cartCacheRepository;
@@ -156,7 +158,7 @@ public class CartService implements ICartService {
             return cart;
         }
 
-        System.out.printf("Cart not found for user %s in cache, looking up from Db.", username);
+        log.info("Cart not found for user {} in cache, looking up from Db.", username);
         Optional<com.gskart.cart.data.entities.Cart> cartDbEntityOptional = cartDbRepository.findByUsernameAndStatusIsNot(username, CartStatus.CHECKED_OUT);
         if(cartDbEntityOptional.isEmpty()){
             throw new CartNotFoundException(String.format("Cart doesn't exist for user: %s in both cache and database", username));
@@ -175,11 +177,10 @@ public class CartService implements ICartService {
         CompletableFuture<SendResult<String, Object>> sendResultCompletableFuture = kafkaTemplate.send(cartProducerRecord);
         sendResultCompletableFuture.whenComplete((result, ex)->{
             if(ex!=null){
-                System.out.printf("Cart (Id: %s) was not sent to Kafka topic %s. Exception details are below", cart.getId(), KafkaConstants.Topic.CART_UPDATE);
-                ex.printStackTrace();
+                log.error("Cart (Id: {}) was not sent to Kafka topic {}.", cart.getId(), KafkaConstants.Topic.CART_UPDATE, ex);
                 return;
             }
-            System.out.printf("Cart (Id: %s) sent to Kafka topic %s successfully.", cart.getId(), KafkaConstants.Topic.CART_UPDATE);
+            log.info("Cart (Id: {}) sent to Kafka topic {} successfully.", cart.getId(), KafkaConstants.Topic.CART_UPDATE);
         });
     }
 
@@ -362,18 +363,17 @@ public class CartService implements ICartService {
         CompletableFuture<SendResult<String, Object>> placeOrderFuture = kafkaTemplate.send(placeOrderProducerRecord);
         placeOrderFuture.whenComplete((result, ex) -> {
             if(ex != null){
-                System.out.printf("Couldn't place order for cart %s. Error occurred while sending Order Request to Topic %s", cart.getId(), KafkaConstants.Topic.ORDER_PLACE);
-                ex.printStackTrace();
+                log.error("Couldn't place order for cart {}. Error occurred while sending Order Request to Topic {}", cart.getId(), KafkaConstants.Topic.ORDER_PLACE, ex);
                 OrderDetails orderDetails = new OrderDetails();
                 orderDetails.setOrderStatus(OrderStatus.COULD_NOT_PLACE_ORDER);
                 try {
                     updateOrderDetails(cart.getId(), orderDetails);
                 } catch (CartNotFoundException e) {
-                    e.printStackTrace();
+                    log.error("Failed to update order details for cart {} after order placement failure.", cart.getId(), e);
                 }
                 return;
             }
-            System.out.printf("Order successfully placed for cart: %s", cart.getId());
+            log.info("Order successfully placed for cart: {}", cart.getId());
         });
     }
 

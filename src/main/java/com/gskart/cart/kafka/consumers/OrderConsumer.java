@@ -8,6 +8,7 @@ import com.gskart.cart.exceptions.CartNotFoundException;
 import com.gskart.cart.kafka.constants.KafkaConstants;
 import com.gskart.cart.mappers.CartMapper;
 import com.gskart.cart.services.CartService;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpMethod;
@@ -22,6 +23,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 import java.net.URI;
 import java.util.Objects;
 
+@Slf4j
 @Component
 public class OrderConsumer {
     private final CartMapper cartMapper;
@@ -48,7 +50,7 @@ public class OrderConsumer {
         // 1. Get Order details from consumer record.
         OrderRequest orderRequest = (OrderRequest) consumerRecord.value();
         URI placeOrderUrl = UriComponentsBuilder
-                .fromHttpUrl(orderServiceBaseUrl)
+                .fromUriString(orderServiceBaseUrl)
                 .path(PlaceOrderEndpoint)
                 .build().toUri();
 
@@ -60,8 +62,8 @@ public class OrderConsumer {
 
         // 3. Write order status to Cart
         if (!orderPlacedResponseEntity.getStatusCode().is2xxSuccessful()) {
-            System.out.printf(
-                    "Order was not successfully placed for cart: %s. Status code: %s", orderRequest.getCartId(),
+            log.error(
+                    "Order was not successfully placed for cart: {}. Status code: {}", orderRequest.getCartId(),
                     orderPlacedResponseEntity.getStatusCode());
 
             if (orderPlacedResponseEntity.hasBody()) {
@@ -77,7 +79,7 @@ public class OrderConsumer {
         try {
             cartService.updateOrderDetails(orderRequest.getCartId(), orderDetails);
         } catch (CartNotFoundException e) {
-            e.printStackTrace();
+            log.error("Failed to update order details for cart {}.", orderRequest.getCartId(), e);
         }
 
     }

@@ -1,0 +1,71 @@
+name: gskart-cart                    # local dev infra for cart-rest-service only.
+                                      # Superseded by the centralized docker-compose.infra.yml (D9)
+                                      # once that exists at the gskart/ root.
+services:
+  mongo:
+    # Pinned to 7.0, not 8.0: MongoDB 8.0's kernel-version gate rejects OrbStack's newer VM kernel
+    # (7.x) with "known incompatibility" (SERVER-121912) even though it runs fine in practice.
+    image: mongo:7.0
+    container_name: cart-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+      CART_MONGO_DATABASE: ${CART_MONGO_DATABASE}
+      CART_MONGO_USER: ${CART_MONGO_USER}
+      CART_MONGO_PASSWORD: ${CART_MONGO_PASSWORD}
+    volumes:
+      - cart-mongo-data:/data/db
+      - ./docker/mongo/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "-u", "${MONGO_ROOT_USERNAME}", "-p", "${MONGO_ROOT_PASSWORD}", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:8.0
+    container_name: cart-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--requirepass", "${CART_REDIS_PASSWORD}"]
+    volumes:
+      - cart-redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # REDISCLI_AUTH is picked up by redis-cli automatically, avoiding the "password on the
+    # command line" warning/exposure that passing it via `-a` causes.
+    environment:
+      REDISCLI_AUTH: ${CART_REDIS_PASSWORD}
+
+  kafka:
+    image: apache/kafka:4.3.1
+    container_name: cart-kafka
+    restart: unless-stopped
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: controller,broker
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      # Broker default (3) can't be satisfied with a single broker, which silently breaks all
+      # consumer-group coordination (__consumer_offsets never gets created) - single-node dev only.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+    volumes:
+      - cart-kafka-data:/var/lib/kafka/data
+
+volumes:
+  cart-mongo-data:
+  cart-redis-data:
+  cart-kafka-data:

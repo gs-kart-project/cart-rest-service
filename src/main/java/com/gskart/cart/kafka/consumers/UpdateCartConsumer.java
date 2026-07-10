@@ -4,6 +4,7 @@ import com.gskart.cart.kafka.constants.KafkaConstants;
 import com.gskart.cart.mappers.CartMapper;
 import com.gskart.cart.redis.entities.Cart;
 import com.gskart.cart.redis.repositories.CartRepository;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.header.Header;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -15,6 +16,7 @@ import org.springframework.kafka.support.KafkaHeaders;
 import org.springframework.kafka.support.KafkaUtils;
 import org.springframework.stereotype.Component;
 
+@Slf4j
 @Component
 public class UpdateCartConsumer {
 
@@ -46,11 +48,11 @@ public class UpdateCartConsumer {
             if(consumerRecord.headers().headers(KafkaHeaders.GROUP_ID) != null){
                 while(consumerRecord.headers().headers(KafkaHeaders.GROUP_ID).iterator().hasNext()){
                     consumerGroupId = consumerRecord.headers().headers(KafkaHeaders.GROUP_ID).iterator().next().toString();
-                    System.out.printf("Consumer group Id: %s", consumerGroupId);
+                    log.info("Consumer group Id: {}", consumerGroupId);
                 }
             }
         }*/
-        System.out.printf("Consumer group Id: %s\n", consumerGroupId);
+        log.info("Consumer group Id: {}", consumerGroupId);
 
         // 2. Mapping cart redis entity to cart mongo entity.
         com.gskart.cart.data.entities.Cart cartEntity = cartMapper.cartCacheToDbEntity(cartCached);
