@@ -21,13 +21,6 @@ public class CartRepository implements ICartRepository {
 
     public CartRepository(MongoTemplate mongoTemplate) {
         this.mongoTemplate = mongoTemplate;
-        //createCollection(MongoConstants.CollectionNames.CART);
-    }
-
-    private void createCollection(String collectionName) {
-        if(!this.mongoTemplate.collectionExists(collectionName)) {
-            this.mongoTemplate.createCollection(collectionName);
-        }
     }
 
     @Override
