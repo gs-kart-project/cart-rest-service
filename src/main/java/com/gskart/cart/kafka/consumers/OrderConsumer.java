@@ -77,7 +77,7 @@ public class OrderConsumer {
         }
 
         try {
-            cartService.updateOrderDetails(orderRequest.getCartId(), orderDetails);
+            cartService.updateOrderDetails(orderRequest.getCartId(), orderDetails, orderRequest.getPlacedBy());
         } catch (CartNotFoundException e) {
             log.error("Failed to update order details for cart {}.", orderRequest.getCartId(), e);
         }

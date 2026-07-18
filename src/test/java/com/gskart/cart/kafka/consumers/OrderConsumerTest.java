@@ -46,6 +46,7 @@ class OrderConsumerTest {
     private OrderRequest orderRequest() {
         OrderRequest orderRequest = new OrderRequest();
         orderRequest.setCartId("cart-1");
+        orderRequest.setPlacedBy("placed-by-user");
         return orderRequest;
     }
 
@@ -64,7 +65,7 @@ class OrderConsumerTest {
         orderConsumer.consumePlaceOrder(recordWith(orderRequest));
 
         ArgumentCaptor<OrderDetails> captor = ArgumentCaptor.forClass(OrderDetails.class);
-        verify(cartService).updateOrderDetails(eq("cart-1"), captor.capture());
+        verify(cartService).updateOrderDetails(eq("cart-1"), captor.capture(), eq("placed-by-user"));
         assertThat(captor.getValue().getOrderId()).isEqualTo(42);
         assertThat(captor.getValue().getOrderStatus()).isEqualTo(OrderStatus.ORDER_PLACED);
     }
@@ -80,7 +81,7 @@ class OrderConsumerTest {
         orderConsumer.consumePlaceOrder(recordWith(orderRequest));
 
         ArgumentCaptor<OrderDetails> captor = ArgumentCaptor.forClass(OrderDetails.class);
-        verify(cartService).updateOrderDetails(eq("cart-1"), captor.capture());
+        verify(cartService).updateOrderDetails(eq("cart-1"), captor.capture(), eq("placed-by-user"));
         assertThat(captor.getValue().getOrderId()).isEqualTo(7);
         assertThat(captor.getValue().getOrderStatus()).isEqualTo(OrderStatus.COULD_NOT_PLACE_ORDER);
     }
@@ -94,7 +95,7 @@ class OrderConsumerTest {
         orderConsumer.consumePlaceOrder(recordWith(orderRequest));
 
         ArgumentCaptor<OrderDetails> captor = ArgumentCaptor.forClass(OrderDetails.class);
-        verify(cartService).updateOrderDetails(eq("cart-1"), captor.capture());
+        verify(cartService).updateOrderDetails(eq("cart-1"), captor.capture(), eq("placed-by-user"));
         assertThat(captor.getValue().getOrderId()).isNull();
         assertThat(captor.getValue().getOrderStatus()).isNull();
     }
@@ -110,7 +111,7 @@ class OrderConsumerTest {
         orderConsumer.consumePlaceOrder(recordWith(orderRequest));
 
         ArgumentCaptor<OrderDetails> captor = ArgumentCaptor.forClass(OrderDetails.class);
-        verify(cartService).updateOrderDetails(eq("cart-1"), captor.capture());
+        verify(cartService).updateOrderDetails(eq("cart-1"), captor.capture(), eq("placed-by-user"));
         assertThat(captor.getValue().getOrderId()).isNull();
     }
 
@@ -125,7 +126,7 @@ class OrderConsumerTest {
         orderConsumer.consumePlaceOrder(recordWith(orderRequest));
 
         ArgumentCaptor<OrderDetails> captor = ArgumentCaptor.forClass(OrderDetails.class);
-        verify(cartService).updateOrderDetails(eq("cart-1"), captor.capture());
+        verify(cartService).updateOrderDetails(eq("cart-1"), captor.capture(), eq("placed-by-user"));
         assertThat(captor.getValue().getOrderId()).isNull();
     }
 
@@ -136,10 +137,10 @@ class OrderConsumerTest {
         response.setOrderId("42");
         when(restTemplate.exchange(any(RequestEntity.class), eq(OrderPlacedResponse.class)))
                 .thenReturn(new ResponseEntity<>(response, HttpStatus.OK));
-        doThrow(new CartNotFoundException("missing")).when(cartService).updateOrderDetails(eq("cart-1"), any());
+        doThrow(new CartNotFoundException("missing")).when(cartService).updateOrderDetails(eq("cart-1"), any(), any());
 
         orderConsumer.consumePlaceOrder(recordWith(orderRequest));
 
-        verify(cartService).updateOrderDetails(eq("cart-1"), any());
+        verify(cartService).updateOrderDetails(eq("cart-1"), any(), eq("placed-by-user"));
     }
 }

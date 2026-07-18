@@ -11,8 +11,7 @@ import com.gskart.cart.exceptions.DeleteCartException;
 import com.gskart.cart.exceptions.UpdateCartException;
 import com.gskart.cart.mappers.CartMapper;
 import com.gskart.cart.redis.entities.Cart;
-import com.gskart.cart.security.models.GSKartResourceServerUserContext;
-import com.gskart.cart.services.CartService;
+import com.gskart.cart.services.ICartService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -22,16 +21,14 @@ import java.util.List;
 
 @Slf4j
 @RestController
-@RequestMapping("/carts")
+@RequestMapping("/api/v1/carts")
 public class CartController {
-    private final CartService cartService;
+    private final ICartService cartService;
     private final CartMapper cartMapper;
-    private final GSKartResourceServerUserContext resourceServerUserContext;
 
-    public CartController(CartService cartService, CartMapper cartMapper, GSKartResourceServerUserContext resourceServerUserContext) {
+    public CartController(ICartService cartService, CartMapper cartMapper) {
         this.cartService = cartService;
         this.cartMapper = cartMapper;
-        this.resourceServerUserContext = resourceServerUserContext;
     }
 
     @PostMapping("")
@@ -61,7 +58,7 @@ public class CartController {
     public ResponseEntity<CartResponse> getActiveCart() {
         Cart cart = null;
         try {
-            cart = cartService.getOpenCartForUser(resourceServerUserContext.getGskartResourceServerUser().getUsername());
+            cart = cartService.getOpenCartForCurrentUser();
             if(cart == null) {
                 return new ResponseEntity<>(HttpStatus.NO_CONTENT);
             }
@@ -72,7 +69,7 @@ public class CartController {
 
     }
 
-    @PutMapping("/{cartId}/Products")
+    @PutMapping("/{cartId}/products")
     public ResponseEntity<Boolean> updateProductsInCart(@PathVariable String cartId, @RequestBody List<ProductItem> productItemList) {
         try {
             boolean productAdded = cartService.updateProductsInCart(cartId, productItemList);
@@ -83,7 +80,7 @@ public class CartController {
         }
     }
 
-    @DeleteMapping("{cartId}/Products")
+    @DeleteMapping("/{cartId}/products")
     public ResponseEntity<Boolean> deleteProductsInCart(@PathVariable String cartId, @RequestBody List<Integer> productIdList) {
         try{
             boolean isDeleteSucceeded = cartService.deleteProductsFromCart(cartId, productIdList);

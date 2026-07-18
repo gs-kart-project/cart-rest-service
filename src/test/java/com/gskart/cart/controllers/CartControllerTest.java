@@ -11,16 +11,15 @@ import com.gskart.cart.exceptions.DeleteCartException;
 import com.gskart.cart.exceptions.UpdateCartException;
 import com.gskart.cart.mappers.CartMapper;
 import com.gskart.cart.redis.entities.Cart;
-import com.gskart.cart.security.models.GSKartResourceServerUser;
-import com.gskart.cart.security.models.GSKartResourceServerUserContext;
-import com.gskart.cart.services.CartService;
+import com.gskart.cart.services.ICartService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
@@ -30,19 +29,29 @@ import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-@WebMvcTest(CartController.class)
-@AutoConfigureMockMvc(addFilters = false)
+/**
+ * Standalone MockMvc around just the controller — no Spring context, no security filter chain.
+ * {@code @WebMvcTest} was tried first, but the slice doesn't scan {@code SecurityConfig} (a plain
+ * {@code @Configuration}, not a web-layer stereotype), so Boot's OAuth2 resource-server
+ * autoconfiguration falls back to its own default chain and fails wiring an {@code HttpSecurity}
+ * bean that only {@code @EnableWebSecurity} would supply. The real chain is exercised instead by
+ * the Testcontainers-backed {@code CartIntegrationTest}. Mirrors product-rest-service's
+ * {@code ProductsControllerTest}/{@code CategoryControllerTest} pattern.
+ */
+@ExtendWith(MockitoExtension.class)
 class CartControllerTest {
 
-    @Autowired
+    @Mock
+    private ICartService cartService;
+    @Mock
+    private CartMapper cartMapper;
+
     private MockMvc mockMvc;
 
-    @MockitoBean
-    private CartService cartService;
-    @MockitoBean
-    private CartMapper cartMapper;
-    @MockitoBean
-    private GSKartResourceServerUserContext resourceServerUserContext;
+    @BeforeEach
+    void setUp() {
+        mockMvc = MockMvcBuilders.standaloneSetup(new CartController(cartService, cartMapper)).build();
+    }
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -72,7 +81,7 @@ class CartControllerTest {
         when(cartService.addNewCart(cart)).thenReturn(savedCart);
         when(cartMapper.cartToCartResponse(savedCart)).thenReturn(response);
 
-        mockMvc.perform(post("/carts")
+        mockMvc.perform(post("/api/v1/carts")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
@@ -84,7 +93,7 @@ class CartControllerTest {
         CartRequest request = new CartRequest();
         request.setProductItems(List.of());
 
-        mockMvc.perform(post("/carts")
+        mockMvc.perform(post("/api/v1/carts")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isBadRequest());
@@ -94,7 +103,7 @@ class CartControllerTest {
 
     @Test
     void addCart_returns400_whenProductItemsFieldAbsent() throws Exception {
-        mockMvc.perform(post("/carts")
+        mockMvc.perform(post("/api/v1/carts")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isBadRequest());
@@ -111,7 +120,7 @@ class CartControllerTest {
         when(cartService.getCartById("cart-1")).thenReturn(cart);
         when(cartMapper.cartToCartResponse(cart)).thenReturn(response);
 
-        mockMvc.perform(get("/carts/cart-1"))
+        mockMvc.perform(get("/api/v1/carts/cart-1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.cartId").value("cart-1"));
     }
@@ -120,43 +129,37 @@ class CartControllerTest {
     void getCart_returns400_whenNotFound() throws Exception {
         when(cartService.getCartById("missing")).thenThrow(new CartNotFoundException("not found"));
 
-        mockMvc.perform(get("/carts/missing"))
+        mockMvc.perform(get("/api/v1/carts/missing"))
                 .andExpect(status().isBadRequest());
     }
 
     @Test
     void getActiveCart_returns200_whenPresent() throws Exception {
-        GSKartResourceServerUser user = new GSKartResourceServerUser();
-        when(resourceServerUserContext.getGskartResourceServerUser()).thenReturn(user);
         Cart cart = new Cart();
         cart.setId("cart-1");
         CartResponse response = new CartResponse();
         response.setCartId("cart-1");
-        when(cartService.getOpenCartForUser("SystemUser")).thenReturn(cart);
+        when(cartService.getOpenCartForCurrentUser()).thenReturn(cart);
         when(cartMapper.cartToCartResponse(cart)).thenReturn(response);
 
-        mockMvc.perform(get("/carts/active"))
+        mockMvc.perform(get("/api/v1/carts/active"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.cartId").value("cart-1"));
     }
 
     @Test
     void getActiveCart_returns204_whenNoneOpen() throws Exception {
-        GSKartResourceServerUser user = new GSKartResourceServerUser();
-        when(resourceServerUserContext.getGskartResourceServerUser()).thenReturn(user);
-        when(cartService.getOpenCartForUser("SystemUser")).thenReturn(null);
+        when(cartService.getOpenCartForCurrentUser()).thenReturn(null);
 
-        mockMvc.perform(get("/carts/active"))
+        mockMvc.perform(get("/api/v1/carts/active"))
                 .andExpect(status().isNoContent());
     }
 
     @Test
     void getActiveCart_returns204_whenCartNotFoundException() throws Exception {
-        GSKartResourceServerUser user = new GSKartResourceServerUser();
-        when(resourceServerUserContext.getGskartResourceServerUser()).thenReturn(user);
-        when(cartService.getOpenCartForUser("SystemUser")).thenThrow(new CartNotFoundException("none"));
+        when(cartService.getOpenCartForCurrentUser()).thenThrow(new CartNotFoundException("none"));
 
-        mockMvc.perform(get("/carts/active"))
+        mockMvc.perform(get("/api/v1/carts/active"))
                 .andExpect(status().isNoContent());
     }
 
@@ -164,7 +167,7 @@ class CartControllerTest {
     void updateProductsInCart_returns200_onSuccess() throws Exception {
         when(cartService.updateProductsInCart(eq("cart-1"), anyList())).thenReturn(true);
 
-        mockMvc.perform(put("/carts/cart-1/Products")
+        mockMvc.perform(put("/api/v1/carts/cart-1/products")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(List.of(productItem()))))
                 .andExpect(status().isOk())
@@ -176,7 +179,7 @@ class CartControllerTest {
         when(cartService.updateProductsInCart(eq("missing"), anyList()))
                 .thenThrow(new CartNotFoundException("not found"));
 
-        mockMvc.perform(put("/carts/missing/Products")
+        mockMvc.perform(put("/api/v1/carts/missing/products")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(List.of(productItem()))))
                 .andExpect(status().isBadRequest());
@@ -186,7 +189,7 @@ class CartControllerTest {
     void deleteProductsInCart_returns200_onSuccess() throws Exception {
         when(cartService.deleteProductsFromCart(eq("cart-1"), anyList())).thenReturn(true);
 
-        mockMvc.perform(delete("/carts/cart-1/Products")
+        mockMvc.perform(delete("/api/v1/carts/cart-1/products")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(List.of(1))))
                 .andExpect(status().isOk())
@@ -198,7 +201,7 @@ class CartControllerTest {
         when(cartService.deleteProductsFromCart(eq("missing"), anyList()))
                 .thenThrow(new CartNotFoundException("not found"));
 
-        mockMvc.perform(delete("/carts/missing/Products")
+        mockMvc.perform(delete("/api/v1/carts/missing/products")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(List.of(1))))
                 .andExpect(status().isBadRequest());
@@ -213,7 +216,7 @@ class CartControllerTest {
         when(cartMapper.contactRequestToContact(any(ContactRequest.class)))
                 .thenReturn(new com.gskart.cart.data.entities.Contact());
 
-        mockMvc.perform(put("/carts/cart-1/contacts")
+        mockMvc.perform(put("/api/v1/carts/cart-1/contacts")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
@@ -231,7 +234,7 @@ class CartControllerTest {
         doThrow(new UpdateCartException("bad"))
                 .when(cartService).updateDeliveryContact(eq("cart-1"), any(), any(), any());
 
-        mockMvc.perform(put("/carts/cart-1/contacts")
+        mockMvc.perform(put("/api/v1/carts/cart-1/contacts")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isBadRequest());
@@ -239,7 +242,7 @@ class CartControllerTest {
 
     @Test
     void deleteContact_returns200_onSuccess() throws Exception {
-        mockMvc.perform(delete("/carts/cart-1/contacts")
+        mockMvc.perform(delete("/api/v1/carts/cart-1/contacts")
                         .param("deliveryDetailId", "1")
                         .param("contactId", "1")
                         .param("contactType", "BILLING"))
@@ -252,7 +255,7 @@ class CartControllerTest {
         doThrow(new DeleteCartException("bad"))
                 .when(cartService).deleteContact(eq("cart-1"), any(), any(), any());
 
-        mockMvc.perform(delete("/carts/cart-1/contacts")
+        mockMvc.perform(delete("/api/v1/carts/cart-1/contacts")
                         .param("deliveryDetailId", "1")
                         .param("contactId", "1")
                         .param("contactType", "BILLING"))
@@ -263,7 +266,7 @@ class CartControllerTest {
     void checkoutCart_returns200_onSuccess() throws Exception {
         when(cartService.checkout("cart-1")).thenReturn("cart-1");
 
-        mockMvc.perform(put("/carts/cart-1/checkout"))
+        mockMvc.perform(put("/api/v1/carts/cart-1/checkout"))
                 .andExpect(status().isOk())
                 .andExpect(content().string("Cart cart-1 checked out successfully"));
     }
@@ -272,7 +275,7 @@ class CartControllerTest {
     void checkoutCart_returns400_whenUpdateCartException() throws Exception {
         when(cartService.checkout("cart-1")).thenThrow(new UpdateCartException("cannot checkout"));
 
-        mockMvc.perform(put("/carts/cart-1/checkout"))
+        mockMvc.perform(put("/api/v1/carts/cart-1/checkout"))
                 .andExpect(status().isBadRequest());
     }
 }

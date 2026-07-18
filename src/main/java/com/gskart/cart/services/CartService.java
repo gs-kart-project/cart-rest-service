@@ -4,6 +4,7 @@ import com.gskart.cart.DTOs.orderService.requests.OrderRequest;
 import com.gskart.cart.DTOs.requests.ContactType;
 import com.gskart.cart.data.entities.*;
 import com.gskart.cart.data.repositories.ICartRepository;
+import com.gskart.cart.exceptions.CartAccessDeniedException;
 import com.gskart.cart.exceptions.CartNotFoundException;
 import com.gskart.cart.exceptions.DeleteCartException;
 import com.gskart.cart.exceptions.UpdateCartException;
@@ -11,6 +12,7 @@ import com.gskart.cart.kafka.constants.KafkaConstants;
 import com.gskart.cart.mappers.CartMapper;
 import com.gskart.cart.redis.entities.Cart;
 import com.gskart.cart.redis.repositories.CartRepository;
+import com.gskart.cart.security.models.GSKartResourceServerUser;
 import com.gskart.cart.security.models.GSKartResourceServerUserContext;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -57,11 +59,12 @@ public class CartService implements ICartService {
 
     @Override
     public Cart addNewCart(Cart cart) {
+        String currentUsername = requireCurrentUser().getUsername();
         cart.setCreatedOn(OffsetDateTime.now(ZoneOffset.UTC));
         cart.setId(UUID.randomUUID().toString());
         cart.setStatus(CartStatus.CREATED);
-        cart.setCartUsername(resourceServerUserContext.getGskartResourceServerUser().getUsername());
-        cart.setCreatedBy(resourceServerUserContext.getGskartResourceServerUser().getUsername());
+        cart.setCartUsername(currentUsername);
+        cart.setCreatedBy(currentUsername);
         // create delivery details
         if(cart.getDeliveryDetails() == null){
             DeliveryDetails deliveryDetails = new DeliveryDetails();
@@ -111,7 +114,7 @@ public class CartService implements ICartService {
             }
         }
         cart.setStatus(CartStatus.APPENDED);
-        cart.setModifiedBy(resourceServerUserContext.getGskartResourceServerUser().getUsername());
+        cart.setModifiedBy(requireCurrentUser().getUsername());
         cart.setModifiedOn(OffsetDateTime.now(ZoneOffset.UTC));
 //        cart.setTtl(cartTTLMins);
         Cart savedCart = cartCacheRepository.save(cart);
@@ -127,7 +130,7 @@ public class CartService implements ICartService {
             productItemListExisting.removeIf(prie -> prie.getProductId().equals(productId));
         }
         cart.setStatus(CartStatus.APPENDED);
-        cart.setModifiedBy(resourceServerUserContext.getGskartResourceServerUser().getUsername());
+        cart.setModifiedBy(requireCurrentUser().getUsername());
         cart.setModifiedOn(OffsetDateTime.now(ZoneOffset.UTC));
         Cart savedCart = cartCacheRepository.save(cart);
         //        cart.setTtl(cartTTLMins);
@@ -137,6 +140,10 @@ public class CartService implements ICartService {
 
     @Override
     public Cart getCartById(String cartId) throws CartNotFoundException {
+        return findCartOwnedByCurrentUser(cartId);
+    }
+
+    private Cart findCart(String cartId) throws CartNotFoundException {
         Optional<Cart> cartOptional = cartCacheRepository.findById(cartId);
         if(cartOptional.isEmpty()){
             throw new CartNotFoundException(String.format("Cart with id:%s does not exist in Redis.", cartId));
@@ -144,8 +151,27 @@ public class CartService implements ICartService {
         return cartOptional.get();
     }
 
+    private GSKartResourceServerUser requireCurrentUser() {
+        GSKartResourceServerUser currentUser = resourceServerUserContext.getGskartResourceServerUser();
+        if(currentUser == null){
+            throw new CartAccessDeniedException("No authenticated user in the current request context.");
+        }
+        return currentUser;
+    }
+
+    private Cart findCartOwnedByCurrentUser(String cartId) throws CartNotFoundException {
+        Cart cart = findCart(cartId);
+        String currentUsername = requireCurrentUser().getUsername();
+        if(!Objects.equals(cart.getCartUsername(), currentUsername)){
+            log.warn("User {} attempted to access cart {} owned by a different user.", currentUsername, cartId);
+            throw new CartAccessDeniedException(String.format("Cart %s is not owned by the current user.", cartId));
+        }
+        return cart;
+    }
+
     @Override
-    public Cart getOpenCartForUser(String username) throws CartNotFoundException {
+    public Cart getOpenCartForCurrentUser() throws CartNotFoundException {
+        String username = requireCurrentUser().getUsername();
         Cart cart = null;
         List<Cart> cartCacheList = cartCacheRepository.findCartsByCartUsername(username);
         if(cartCacheList!=null && !cartCacheList.isEmpty()){
@@ -236,7 +262,7 @@ public class CartService implements ICartService {
             }
         }
         cart.setStatus(CartStatus.APPENDED);
-        cart.setModifiedBy(resourceServerUserContext.getGskartResourceServerUser().getUsername());
+        cart.setModifiedBy(requireCurrentUser().getUsername());
         cart.setModifiedOn(OffsetDateTime.now(ZoneOffset.UTC));
 
         cart = cartCacheRepository.save(cart);
@@ -271,7 +297,7 @@ public class CartService implements ICartService {
         }
         cart = cartCacheRepository.save(cart);
         cart.setStatus(CartStatus.APPENDED);
-        cart.setModifiedBy(resourceServerUserContext.getGskartResourceServerUser().getUsername());
+        cart.setModifiedBy(requireCurrentUser().getUsername());
         cart.setModifiedOn(OffsetDateTime.now(ZoneOffset.UTC));
         saveCartInDb(cart);
 
@@ -289,6 +315,7 @@ public class CartService implements ICartService {
     Once create new order is success
         1. Update cart with order details
      */
+    @Override
     public String checkout(String cartId) throws CartNotFoundException, UpdateCartException {
         Cart cart = getCartById(cartId);
         // At least 1 product should exist in the cart
@@ -338,7 +365,7 @@ public class CartService implements ICartService {
         }
 
         cart.setStatus(CartStatus.CHECKED_OUT);
-        cart.setModifiedBy(resourceServerUserContext.getGskartResourceServerUser().getUsername());
+        cart.setModifiedBy(requireCurrentUser().getUsername());
         cart.setModifiedOn(OffsetDateTime.now(ZoneOffset.UTC));
         cartCacheRepository.save(cart);
         // Save cart in Db (Kafka)
@@ -367,7 +394,7 @@ public class CartService implements ICartService {
                 OrderDetails orderDetails = new OrderDetails();
                 orderDetails.setOrderStatus(OrderStatus.COULD_NOT_PLACE_ORDER);
                 try {
-                    updateOrderDetails(cart.getId(), orderDetails);
+                    updateOrderDetails(cart.getId(), orderDetails, cart.getCartUsername());
                 } catch (CartNotFoundException e) {
                     log.error("Failed to update order details for cart {} after order placement failure.", cart.getId(), e);
                 }
@@ -377,8 +404,13 @@ public class CartService implements ICartService {
         });
     }
 
-    public Cart updateOrderDetails(String cartId, OrderDetails orderDetails) throws CartNotFoundException {
-        Cart cart = getCartById(cartId);
+    /**
+     * Runs on the Kafka producer-callback thread (placeOrder's whenComplete) or the OrderConsumer
+     * listener thread — neither has a request-scoped user, so the caller passes modifiedBy explicitly
+     * (sourced from the order event's placedBy, itself the cart owner at checkout time).
+     */
+    public Cart updateOrderDetails(String cartId, OrderDetails orderDetails, String modifiedBy) throws CartNotFoundException {
+        Cart cart = findCart(cartId);
         if(cart.getOrderDetails() == null){
             cart.setOrderDetails(orderDetails);
         }
@@ -386,15 +418,16 @@ public class CartService implements ICartService {
             cart.getOrderDetails().setOrderId(orderDetails.getOrderId());
             cart.getOrderDetails().setOrderStatus(orderDetails.getOrderStatus());
         }
-        cart.setModifiedBy(resourceServerUserContext.getGskartResourceServerUser().getUsername());
+        cart.setModifiedBy(modifiedBy);
         cart.setModifiedOn(OffsetDateTime.now(ZoneOffset.UTC));
         cartCacheRepository.save(cart);
         saveCartInDb(cart);
         return cart;
     }
 
-    public Cart updatePaymentDetails(String cartId, PaymentDetails paymentDetails) throws CartNotFoundException {
-        Cart cart = getCartById(cartId);
+    /** Same non-request-thread rationale as {@link #updateOrderDetails}. */
+    public Cart updatePaymentDetails(String cartId, PaymentDetails paymentDetails, String modifiedBy) throws CartNotFoundException {
+        Cart cart = findCart(cartId);
         if(cart.getPaymentDetails() == null){
             cart.setPaymentDetails(paymentDetails);
         }
@@ -403,7 +436,7 @@ public class CartService implements ICartService {
             cart.getPaymentDetails().setPaymentStatus(paymentDetails.getPaymentStatus());
         }
 
-        cart.setModifiedBy(resourceServerUserContext.getGskartResourceServerUser().getUsername());
+        cart.setModifiedBy(modifiedBy);
         cart.setModifiedOn(OffsetDateTime.now(ZoneOffset.UTC));
         cartCacheRepository.save(cart);
         saveCartInDb(cart);
