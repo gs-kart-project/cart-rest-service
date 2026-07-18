@@ -21,9 +21,11 @@ public interface ICartService {
 
     Cart getCartById(String cartId) throws CartNotFoundException;
 
-    Cart getOpenCartForUser(String username) throws CartNotFoundException;
+    Cart getOpenCartForCurrentUser() throws CartNotFoundException;
 
     boolean updateDeliveryContact(String cartId, Short deliveryDetailId, Contact contact, ContactType contactType) throws CartNotFoundException, UpdateCartException;
 
     boolean deleteContact(String cartId, Short deliveryDetailId, Short contactId, ContactType contactType) throws CartNotFoundException, UpdateCartException, DeleteCartException;
+
+    String checkout(String cartId) throws CartNotFoundException, UpdateCartException;
 }

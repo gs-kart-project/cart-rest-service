@@ -1,9 +1,13 @@
 package com.gskart.cart.integration;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureRestTestClient;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.junit.jupiter.Container;
@@ -13,6 +17,11 @@ import org.testcontainers.utility.DockerImageName;
 import org.testcontainers.utility.MountableFile;
 
 import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+
+import static org.mockito.ArgumentMatchers.startsWith;
+import static org.mockito.Mockito.lenient;
 
 /**
  * Shared Testcontainers harness (Mongo + Redis + Kafka) for integration tests. The app reads
@@ -22,11 +31,44 @@ import java.time.Duration;
  * via {@code @DynamicPropertySource} instead. Mongo is provisioned with the same
  * app-user-on-top-of-root-auth model as local dev (docker-compose.yml / docker/mongo/init),
  * reusing that init script verbatim as a test resource.
+ *
+ * <p>The resource server's {@link JwtDecoder} is mocked so requests never hop to a live auth
+ * service: tokens minted via {@link #bearerTokenFor(String)} decode locally to a {@link Jwt}
+ * carrying that username as {@code sub}. The real security filter chain (including
+ * {@code JwtUserContextFilter}) still runs — only the JWKS-backed signature check is bypassed.
  */
 @Testcontainers
 @AutoConfigureRestTestClient
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 public abstract class AbstractIntegrationTest {
+
+    // RFC 6750 token68 charset excludes ':' — BearerTokenAuthenticationFilter 400s on it before the
+    // JwtDecoder is ever invoked, so the separator has to be a char that charset allows.
+    private static final String IT_TOKEN_PREFIX = "it-token-";
+
+    @MockitoBean
+    protected JwtDecoder jwtDecoder;
+
+    protected String bearerTokenFor(String username) {
+        return IT_TOKEN_PREFIX + username;
+    }
+
+    @BeforeEach
+    void stubJwtDecoderForAnyItUser() {
+        lenient().when(jwtDecoder.decode(startsWith(IT_TOKEN_PREFIX))).thenAnswer(invocation -> {
+            String token = invocation.getArgument(0);
+            String username = token.substring(IT_TOKEN_PREFIX.length());
+            Instant now = Instant.now();
+            return Jwt.withTokenValue(token)
+                    .header("alg", "none")
+                    .claim("sub", username)
+                    .claim("email", username + "@gskart.local")
+                    .claim("roles", List.of("Customer"))
+                    .issuedAt(now)
+                    .expiresAt(now.plusSeconds(300))
+                    .build();
+        });
+    }
 
     protected static final String MONGO_DATABASE = "gskart-CartDb-it";
     protected static final String MONGO_USER = "cart-it-user";

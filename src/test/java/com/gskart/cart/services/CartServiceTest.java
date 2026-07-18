@@ -3,6 +3,7 @@ package com.gskart.cart.services;
 import com.gskart.cart.DTOs.requests.ContactType;
 import com.gskart.cart.data.entities.*;
 import com.gskart.cart.data.repositories.ICartRepository;
+import com.gskart.cart.exceptions.CartAccessDeniedException;
 import com.gskart.cart.exceptions.CartNotFoundException;
 import com.gskart.cart.exceptions.DeleteCartException;
 import com.gskart.cart.exceptions.UpdateCartException;
@@ -58,7 +59,7 @@ class CartServiceTest {
         cartService = new CartService(cartCacheRepository, cartDbRepository, kafkaTemplate,
                 resourceServerUserContext, cartMapper, stringObjectRedisTemplate);
         lenient().when(resourceServerUserContext.getGskartResourceServerUser()).thenReturn(resourceServerUser);
-        lenient().when(resourceServerUser.getUsername()).thenReturn("SystemUser");
+        lenient().when(resourceServerUser.getUsername()).thenReturn("cart-user");
         lenient().when(kafkaTemplate.send(any(ProducerRecord.class)))
                 .thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
     }
@@ -77,6 +78,7 @@ class CartServiceTest {
     private Cart cartWithProducts() {
         Cart cart = new Cart();
         cart.setId("cart-1");
+        cart.setCartUsername("cart-user");
         cart.setProductItems(new ArrayList<>(List.of(productItem(1))));
         return cart;
     }
@@ -93,8 +95,8 @@ class CartServiceTest {
 
         assertThat(result.getId()).isNotNull();
         assertThat(result.getStatus()).isEqualTo(CartStatus.CREATED);
-        assertThat(result.getCartUsername()).isEqualTo("SystemUser");
-        assertThat(result.getCreatedBy()).isEqualTo("SystemUser");
+        assertThat(result.getCartUsername()).isEqualTo("cart-user");
+        assertThat(result.getCreatedBy()).isEqualTo("cart-user");
         assertThat(result.getDeliveryDetails()).hasSize(1);
         assertThat(result.getDeliveryDetails().get(0).getProductIds()).containsExactly(1);
 
@@ -134,6 +136,15 @@ class CartServiceTest {
         assertThat(result.getDeliveryDetails().get(0).getId()).isEqualTo((short) 9);
     }
 
+    @Test
+    void addNewCart_throwsCartAccessDeniedException_whenNoAuthenticatedUser() {
+        when(resourceServerUserContext.getGskartResourceServerUser()).thenReturn(null);
+
+        assertThatThrownBy(() -> cartService.addNewCart(cartWithProducts()))
+                .isInstanceOf(CartAccessDeniedException.class);
+        verifyNoInteractions(cartCacheRepository);
+    }
+
     // ---- getCartById ----
 
     @Test
@@ -154,64 +165,93 @@ class CartServiceTest {
                 .isInstanceOf(CartNotFoundException.class);
     }
 
-    // ---- getOpenCartForUser ----
+    @Test
+    void getCartById_throwsCartAccessDeniedException_whenCartOwnedByAnotherUser() {
+        Cart cart = cartWithProducts();
+        cart.setCartUsername("someone-else");
+        when(cartCacheRepository.findById("cart-1")).thenReturn(Optional.of(cart));
+
+        assertThatThrownBy(() -> cartService.getCartById("cart-1"))
+                .isInstanceOf(CartAccessDeniedException.class);
+    }
 
     @Test
-    void getOpenCartForUser_returnsOpenCart_fromCache() throws CartNotFoundException {
+    void getCartById_throwsCartAccessDeniedException_whenNoAuthenticatedUser() {
+        Cart cart = cartWithProducts();
+        when(cartCacheRepository.findById("cart-1")).thenReturn(Optional.of(cart));
+        when(resourceServerUserContext.getGskartResourceServerUser()).thenReturn(null);
+
+        assertThatThrownBy(() -> cartService.getCartById("cart-1"))
+                .isInstanceOf(CartAccessDeniedException.class);
+    }
+
+    // ---- getOpenCartForCurrentUser ----
+
+    @Test
+    void getOpenCartForCurrentUser_returnsOpenCart_fromCache() throws CartNotFoundException {
         Cart checkedOut = cartWithProducts();
         checkedOut.setStatus(CartStatus.CHECKED_OUT);
         Cart open = cartWithProducts();
         open.setId("cart-open");
         open.setStatus(CartStatus.CREATED);
-        when(cartCacheRepository.findCartsByCartUsername("SystemUser")).thenReturn(List.of(checkedOut, open));
+        when(cartCacheRepository.findCartsByCartUsername("cart-user")).thenReturn(List.of(checkedOut, open));
 
-        Cart result = cartService.getOpenCartForUser("SystemUser");
+        Cart result = cartService.getOpenCartForCurrentUser();
 
         assertThat(result).isEqualTo(open);
         verifyNoInteractions(cartDbRepository);
     }
 
     @Test
-    void getOpenCartForUser_fallsBackToMongo_whenCacheEmptyOrAllCheckedOut() throws CartNotFoundException {
-        when(cartCacheRepository.findCartsByCartUsername("SystemUser")).thenReturn(List.of());
+    void getOpenCartForCurrentUser_fallsBackToMongo_whenCacheEmptyOrAllCheckedOut() throws CartNotFoundException {
+        when(cartCacheRepository.findCartsByCartUsername("cart-user")).thenReturn(List.of());
         com.gskart.cart.data.entities.Cart dbCart = new com.gskart.cart.data.entities.Cart();
         dbCart.setId("mongo-1");
-        when(cartDbRepository.findByUsernameAndStatusIsNot("SystemUser", CartStatus.CHECKED_OUT))
+        when(cartDbRepository.findByUsernameAndStatusIsNot("cart-user", CartStatus.CHECKED_OUT))
                 .thenReturn(Optional.of(dbCart));
         Cart mappedCart = cartWithProducts();
         when(cartMapper.cartDbToCartCacheEntity(dbCart)).thenReturn(mappedCart);
         when(cartCacheRepository.save(mappedCart)).thenReturn(mappedCart);
 
-        Cart result = cartService.getOpenCartForUser("SystemUser");
+        Cart result = cartService.getOpenCartForCurrentUser();
 
         assertThat(result).isEqualTo(mappedCart);
         verify(cartCacheRepository).save(mappedCart);
     }
 
     @Test
-    void getOpenCartForUser_fallsBackToMongo_whenCacheListIsNull() throws CartNotFoundException {
-        when(cartCacheRepository.findCartsByCartUsername("SystemUser")).thenReturn(null);
+    void getOpenCartForCurrentUser_fallsBackToMongo_whenCacheListIsNull() throws CartNotFoundException {
+        when(cartCacheRepository.findCartsByCartUsername("cart-user")).thenReturn(null);
         com.gskart.cart.data.entities.Cart dbCart = new com.gskart.cart.data.entities.Cart();
         dbCart.setId("mongo-1");
-        when(cartDbRepository.findByUsernameAndStatusIsNot("SystemUser", CartStatus.CHECKED_OUT))
+        when(cartDbRepository.findByUsernameAndStatusIsNot("cart-user", CartStatus.CHECKED_OUT))
                 .thenReturn(Optional.of(dbCart));
         Cart mappedCart = cartWithProducts();
         when(cartMapper.cartDbToCartCacheEntity(dbCart)).thenReturn(mappedCart);
         when(cartCacheRepository.save(mappedCart)).thenReturn(mappedCart);
 
-        Cart result = cartService.getOpenCartForUser("SystemUser");
+        Cart result = cartService.getOpenCartForCurrentUser();
 
         assertThat(result).isEqualTo(mappedCart);
     }
 
     @Test
-    void getOpenCartForUser_throwsCartNotFoundException_whenAbsentInBoth() {
-        when(cartCacheRepository.findCartsByCartUsername("SystemUser")).thenReturn(List.of());
-        when(cartDbRepository.findByUsernameAndStatusIsNot("SystemUser", CartStatus.CHECKED_OUT))
+    void getOpenCartForCurrentUser_throwsCartNotFoundException_whenAbsentInBoth() {
+        when(cartCacheRepository.findCartsByCartUsername("cart-user")).thenReturn(List.of());
+        when(cartDbRepository.findByUsernameAndStatusIsNot("cart-user", CartStatus.CHECKED_OUT))
                 .thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> cartService.getOpenCartForUser("SystemUser"))
+        assertThatThrownBy(() -> cartService.getOpenCartForCurrentUser())
                 .isInstanceOf(CartNotFoundException.class);
+    }
+
+    @Test
+    void getOpenCartForCurrentUser_throwsCartAccessDeniedException_whenNoAuthenticatedUser() {
+        when(resourceServerUserContext.getGskartResourceServerUser()).thenReturn(null);
+
+        assertThatThrownBy(() -> cartService.getOpenCartForCurrentUser())
+                .isInstanceOf(CartAccessDeniedException.class);
+        verifyNoInteractions(cartCacheRepository, cartDbRepository);
     }
 
     // ---- addProductsToCart ----
@@ -544,6 +584,7 @@ class CartServiceTest {
     void checkout_throwsUpdateCartException_whenNoProducts() {
         Cart cart = new Cart();
         cart.setId("cart-1");
+        cart.setCartUsername("cart-user");
         cart.setProductItems(new ArrayList<>());
         when(cartCacheRepository.findById("cart-1")).thenReturn(Optional.of(cart));
 
@@ -556,6 +597,7 @@ class CartServiceTest {
     void checkout_throwsUpdateCartException_whenProductsListIsNull() {
         Cart cart = new Cart();
         cart.setId("cart-1");
+        cart.setCartUsername("cart-user");
         cart.setProductItems(null);
         when(cartCacheRepository.findById("cart-1")).thenReturn(Optional.of(cart));
 
@@ -659,6 +701,8 @@ class CartServiceTest {
     }
 
     // ---- updateOrderDetails / updatePaymentDetails ----
+    // These run on Kafka consumer / producer-callback threads (no request-scoped user), so they take
+    // modifiedBy explicitly rather than reading GSKartResourceServerUserContext.
 
     @Test
     void updateOrderDetails_setsNewOrderDetails_whenNoneExist() throws CartNotFoundException {
@@ -671,9 +715,10 @@ class CartServiceTest {
         orderDetails.setOrderId(42);
         orderDetails.setOrderStatus(OrderStatus.ORDER_PLACED);
 
-        Cart result = cartService.updateOrderDetails("cart-1", orderDetails);
+        Cart result = cartService.updateOrderDetails("cart-1", orderDetails, "order-placer");
 
         assertThat(result.getOrderDetails()).isEqualTo(orderDetails);
+        assertThat(result.getModifiedBy()).isEqualTo("order-placer");
     }
 
     @Test
@@ -690,10 +735,27 @@ class CartServiceTest {
         update.setOrderId(99);
         update.setOrderStatus(OrderStatus.ORDER_PLACED);
 
-        Cart result = cartService.updateOrderDetails("cart-1", update);
+        Cart result = cartService.updateOrderDetails("cart-1", update, "order-placer");
 
         assertThat(result.getOrderDetails().getOrderId()).isEqualTo(99);
         assertThat(result.getOrderDetails().getOrderStatus()).isEqualTo(OrderStatus.ORDER_PLACED);
+    }
+
+    @Test
+    void updateOrderDetails_usesPassedModifiedBy_withoutTouchingRequestContext() throws CartNotFoundException {
+        // Simulates the Kafka consumer / producer-callback threads, which have no request-scoped user.
+        Cart cart = cartWithProducts();
+        cart.setOrderDetails(null);
+        when(cartCacheRepository.findById("cart-1")).thenReturn(Optional.of(cart));
+        when(cartCacheRepository.save(any(Cart.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        OrderDetails orderDetails = new OrderDetails();
+        orderDetails.setOrderStatus(OrderStatus.ORDER_PLACED);
+
+        Cart result = cartService.updateOrderDetails("cart-1", orderDetails, "cart-user");
+
+        assertThat(result.getModifiedBy()).isEqualTo("cart-user");
+        verifyNoInteractions(resourceServerUser);
     }
 
     @Test
@@ -707,9 +769,10 @@ class CartServiceTest {
         paymentDetails.setPaymentId(7);
         paymentDetails.setPaymentStatus(PaymentStatus.COMPLETED);
 
-        Cart result = cartService.updatePaymentDetails("cart-1", paymentDetails);
+        Cart result = cartService.updatePaymentDetails("cart-1", paymentDetails, "cart-user");
 
         assertThat(result.getPaymentDetails()).isEqualTo(paymentDetails);
+        assertThat(result.getModifiedBy()).isEqualTo("cart-user");
     }
 
     @Test
@@ -726,7 +789,7 @@ class CartServiceTest {
         update.setPaymentId(55);
         update.setPaymentStatus(PaymentStatus.COMPLETED);
 
-        Cart result = cartService.updatePaymentDetails("cart-1", update);
+        Cart result = cartService.updatePaymentDetails("cart-1", update, "cart-user");
 
         assertThat(result.getPaymentDetails().getPaymentId()).isEqualTo(55);
         assertThat(result.getPaymentDetails().getPaymentStatus()).isEqualTo(PaymentStatus.COMPLETED);

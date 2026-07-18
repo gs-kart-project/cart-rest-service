@@ -29,8 +29,7 @@ class CartIntegrationTest extends AbstractIntegrationTest {
     @Qualifier("cartDbRepository")
     private ICartRepository cartDbRepository;
 
-    @Test
-    void postCart_roundTripsThroughRedis_andWritesThroughToMongoViaKafka() {
+    private Map<String, Object> newCartRequest() {
         Map<String, Object> productItem = Map.of(
                 "productId", 1,
                 "productName", "Widget",
@@ -39,11 +38,15 @@ class CartIntegrationTest extends AbstractIntegrationTest {
                 "totalPrice", 10.0,
                 "quantityUnit", "COUNT"
         );
-        Map<String, Object> request = Map.of("productItems", List.of(productItem));
+        return Map.of("productItems", List.of(productItem));
+    }
 
-        Map<?, ?> createdBody = restTestClient.post().uri("/carts")
+    @Test
+    void postCart_roundTripsThroughRedis_andWritesThroughToMongoViaKafka() {
+        Map<?, ?> createdBody = restTestClient.post().uri("/api/v1/carts")
+                .header("Authorization", "Bearer " + bearerTokenFor("it-user"))
                 .contentType(MediaType.APPLICATION_JSON)
-                .body(request)
+                .body(newCartRequest())
                 .exchange()
                 .expectStatus().isEqualTo(HttpStatus.OK)
                 .expectBody(Map.class)
@@ -52,7 +55,8 @@ class CartIntegrationTest extends AbstractIntegrationTest {
         String cartId = (String) createdBody.get("cartId");
         assertThat(cartId).isNotBlank();
 
-        Map<?, ?> fetchedBody = restTestClient.get().uri("/carts/{cartId}", cartId)
+        Map<?, ?> fetchedBody = restTestClient.get().uri("/api/v1/carts/{cartId}", cartId)
+                .header("Authorization", "Bearer " + bearerTokenFor("it-user"))
                 .exchange()
                 .expectStatus().isEqualTo(HttpStatus.OK)
                 .expectBody(Map.class)
@@ -61,8 +65,36 @@ class CartIntegrationTest extends AbstractIntegrationTest {
         assertThat(fetchedBody.get("cartId")).isEqualTo(cartId);
 
         await().atMost(Duration.ofSeconds(20)).untilAsserted(() ->
-                assertThat(cartDbRepository.findByUsernameAndStatusIsNot("SystemUser", null).isPresent())
+                assertThat(cartDbRepository.findByUsernameAndStatusIsNot("it-user", null).isPresent())
                         .isTrue()
         );
+    }
+
+    @Test
+    void postCart_returns401_withoutABearerToken() {
+        restTestClient.post().uri("/api/v1/carts")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(newCartRequest())
+                .exchange()
+                .expectStatus().isEqualTo(HttpStatus.UNAUTHORIZED);
+    }
+
+    @Test
+    void getCart_returns403_forACartOwnedByAnotherUser() {
+        Map<?, ?> createdBody = restTestClient.post().uri("/api/v1/carts")
+                .header("Authorization", "Bearer " + bearerTokenFor("owner-user"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(newCartRequest())
+                .exchange()
+                .expectStatus().isEqualTo(HttpStatus.OK)
+                .expectBody(Map.class)
+                .returnResult()
+                .getResponseBody();
+        String cartId = (String) createdBody.get("cartId");
+
+        restTestClient.get().uri("/api/v1/carts/{cartId}", cartId)
+                .header("Authorization", "Bearer " + bearerTokenFor("other-user"))
+                .exchange()
+                .expectStatus().isEqualTo(HttpStatus.FORBIDDEN);
     }
 }
