@@ -167,6 +167,9 @@
 								<exclude>**/converters/**</exclude>
 								<exclude>**/exceptions/**</exclude>
 								<exclude>**/security/models/**</exclude>
+								<exclude>**/messaging/DomainEvent.*</exclude>
+								<exclude>**/messaging/EventPublishException.*</exclude>
+								<exclude>**/messaging/outbox/OutboxEntry.*</exclude>
 							</excludes>
 							<rules>
 								<rule>

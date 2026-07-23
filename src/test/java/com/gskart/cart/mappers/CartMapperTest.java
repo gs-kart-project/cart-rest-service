@@ -225,15 +225,8 @@ class CartMapperTest {
         assertThat(addressDto.getCountry()).isEqualTo("India");
     }
 
-    /**
-     * Documents an existing bug at CartMapper#contactEntityToOrderContactRequest:
-     * {@code phoneNumberDto.setType(phoneNumberDto.getType())} reads back the DTO's own
-     * (still-null) field instead of the source {@code phoneNumber.getType()}, so the mapped
-     * type is always null. Reported to the user; this test pins current behavior rather than
-     * silently "fixing" it as part of a test-only session.
-     */
     @Test
-    void cartRedisEntityToOrderRequest_phoneNumberTypeIsAlwaysNull_dueToKnownMapperBug() {
+    void cartRedisEntityToOrderRequest_mapsPhoneNumberTypeFromSourceEnum() {
         Cart cart = new Cart();
         cart.setId("cart-1");
         cart.setProductItems(List.of());
@@ -253,6 +246,28 @@ class CartMapperTest {
 
         var phoneNumberDto = orderRequest.getDeliveryDetails().get(0).getContacts().get(0).getPhoneNumbers().get(0);
         assertThat(phoneNumberDto.getNumber()).isEqualTo("1234567890");
+        assertThat(phoneNumberDto.getType()).isEqualTo("MOBILE");
+    }
+
+    @Test
+    void cartRedisEntityToOrderRequest_leavesPhoneNumberTypeNull_whenSourceTypeMissing() {
+        Cart cart = new Cart();
+        cart.setId("cart-1");
+        cart.setProductItems(List.of());
+
+        Contact billing = new Contact();
+        billing.setId((short) 1);
+        PhoneNumber phoneNumber = new PhoneNumber();
+        phoneNumber.setNumber("1234567890");
+        billing.setPhoneNumbers(List.of(phoneNumber));
+
+        DeliveryDetails deliveryDetails = new DeliveryDetails();
+        deliveryDetails.setBillingContact(billing);
+        cart.setDeliveryDetails(List.of(deliveryDetails));
+
+        OrderRequest orderRequest = cartMapper.cartRedisEntityToOrderRequest(cart);
+
+        var phoneNumberDto = orderRequest.getDeliveryDetails().get(0).getContacts().get(0).getPhoneNumbers().get(0);
         assertThat(phoneNumberDto.getType()).isNull();
     }
 }

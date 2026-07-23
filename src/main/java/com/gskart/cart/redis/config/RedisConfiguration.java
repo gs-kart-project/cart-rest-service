@@ -1,25 +1,22 @@
 package com.gskart.cart.redis.config;
 
 import com.gskart.cart.redis.entities.Cart;
-import lombok.Setter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.data.redis.cache.RedisCacheConfiguration;
-import org.springframework.data.redis.cache.RedisCacheManager;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.RedisKeyValueAdapter;
 import org.springframework.data.redis.core.RedisKeyValueTemplate;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.convert.KeyspaceConfiguration;
 import org.springframework.data.redis.core.convert.MappingConfiguration;
 import org.springframework.data.redis.core.index.IndexConfiguration;
 import org.springframework.data.redis.core.mapping.RedisMappingContext;
 import org.springframework.data.redis.repository.configuration.EnableRedisRepositories;
 
-import java.time.Duration;
 import java.util.Collections;
 
 @Configuration
@@ -35,10 +32,9 @@ public class RedisConfiguration {
     @Value("${gskart.redis.password}")
     private String redisPassword;
 
+    // Cart cache TTL in minutes (single source of truth: gskart.redis.ttl).
     @Value("${gskart.redis.ttl}")
-    private int cacheTTL;
-
-    private final int MINS = 60;
+    private int cacheTTLMinutes;
 
     @Bean
     public LettuceConnectionFactory redisConnectionFactory() {
@@ -54,22 +50,33 @@ public class RedisConfiguration {
         return redisTemplate;
     }
 
+    /** String-serialized template used by the transactional outbox (RedisOutboxStore). */
     @Bean
-    public RedisMappingContext redisMappingContext() {
-//        GskartKeySpaceConfiguration keySpaceConfiguration = new GskartKeySpaceConfiguration();
-        return new RedisMappingContext(new MappingConfiguration(new IndexConfiguration(), new GskartKeySpaceConfiguration()));
+    public StringRedisTemplate stringRedisTemplate(RedisConnectionFactory redisConnectionFactory){
+        return new StringRedisTemplate(redisConnectionFactory);
     }
 
-    public static class GskartKeySpaceConfiguration extends KeyspaceConfiguration {
-       /* @Setter
-        private int cacheTTL;
+    @Bean
+    public RedisMappingContext redisMappingContext() {
+        return new RedisMappingContext(
+                new MappingConfiguration(new IndexConfiguration(), new GskartKeySpaceConfiguration(cacheTTLMinutes)));
+    }
 
-        private final int MINS = 60;*/
+    /** Applies the configured cart TTL (gskart.redis.ttl, in minutes) to the {@code carts} keyspace. */
+    public static class GskartKeySpaceConfiguration extends KeyspaceConfiguration {
+
+        private static final int SECONDS_PER_MINUTE = 60;
+
+        private final long ttlSeconds;
+
+        public GskartKeySpaceConfiguration(int ttlMinutes) {
+            this.ttlSeconds = (long) ttlMinutes * SECONDS_PER_MINUTE;
+        }
 
         @Override
         protected Iterable<KeyspaceConfiguration.KeyspaceSettings> initialConfiguration() {
             KeyspaceSettings keyspaceSettings = new KeyspaceSettings(Cart.class, "carts");
-            keyspaceSettings.setTimeToLive((long) (30 * 60));
+            keyspaceSettings.setTimeToLive(ttlSeconds);
             return Collections.singleton(keyspaceSettings);
         }
     }
@@ -79,30 +86,6 @@ public class RedisConfiguration {
             RedisMappingContext redisMappingContext,
             RedisTemplate<?, ?> redisTemplate){
         RedisKeyValueAdapter redisKeyValueAdapter = new RedisKeyValueAdapter(redisTemplate);
-        RedisKeyValueTemplate redisKeyValueTemplate = new RedisKeyValueTemplate(redisKeyValueAdapter, redisMappingContext);
-
-        return redisKeyValueTemplate;
+        return new RedisKeyValueTemplate(redisKeyValueAdapter, redisMappingContext);
     }
-
-    /*private RedisTemplate<String, Object> stringObjectRedisTemplate(RedisConnectionFactory redisConnectionFactory){
-        RedisTemplate<String, Object> redisTemplate = new RedisTemplate<>();
-        redisTemplate.setConnectionFactory(redisConnectionFactory);
-        return redisTemplate;
-    }*/
-
-    /*
-    @Bean
-    public RedisCacheManager redisCacheManager(RedisConnectionFactory redisConnectionFactory) {
-        RedisCacheConfiguration cacheConfiguration = RedisCacheConfiguration.defaultCacheConfig()
-                .entryTtl(Duration.ofSeconds(this.cacheTTL))
-                .disableCachingNullValues();
-
-        RedisCacheManager redisCacheManager = RedisCacheManager
-                .builder(redisConnectionFactory)
-                .cacheDefaults(cacheConfiguration)
-                .build();
-        return redisCacheManager;
-    }*/
-
-
 }

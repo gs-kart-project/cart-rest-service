@@ -111,5 +111,8 @@ public abstract class AbstractIntegrationTest {
         registry.add("gskart.redis.password", () -> REDIS_PASSWORD);
 
         registry.add("spring.kafka.bootstrap-servers", kafka::getBootstrapServers);
+
+        // Drain the outbox promptly so the write-through round-trip completes within the test's wait.
+        registry.add("gskart.outbox.relay.fixed-delay-ms", () -> 200);
     }
 }

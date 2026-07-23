@@ -17,8 +17,9 @@ import static org.awaitility.Awaitility.await;
 
 /**
  * Round-trips a cart through the real HTTP + Redis + Kafka + Mongo stack (Testcontainers-backed).
- * The Mongo write happens asynchronously via {@code cart.update} -> UpdateCartConsumer, so this
- * also re-validates the Kafka TYPE_MAPPINGS fix (cart vs orderRequest) end-to-end.
+ * The cart mutation is enqueued to the Redis outbox, the relay publishes {@code cart.update}, and
+ * {@code CartWriteThroughHandler} writes it through to Mongo — so this exercises the whole outbox path
+ * and re-validates the Kafka TYPE_MAPPINGS mapping (cart vs orderRequest) end-to-end.
  */
 class CartIntegrationTest extends AbstractIntegrationTest {
 
