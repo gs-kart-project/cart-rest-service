@@ -8,30 +8,26 @@ import com.gskart.cart.exceptions.CartNotFoundException;
 import com.gskart.cart.exceptions.DeleteCartException;
 import com.gskart.cart.exceptions.UpdateCartException;
 import com.gskart.cart.mappers.CartMapper;
+import com.gskart.cart.messaging.DomainEvent;
+import com.gskart.cart.messaging.outbox.OutboxStore;
 import com.gskart.cart.redis.entities.Cart;
 import com.gskart.cart.redis.repositories.CartRepository;
 import com.gskart.cart.security.models.GSKartResourceServerUser;
 import com.gskart.cart.security.models.GSKartResourceServerUserContext;
-import org.apache.kafka.clients.producer.ProducerRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.support.SendResult;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -42,26 +38,22 @@ class CartServiceTest {
     @Mock
     private ICartRepository cartDbRepository;
     @Mock
-    private KafkaTemplate<String, Object> kafkaTemplate;
+    private OutboxStore outboxStore;
     @Mock
     private GSKartResourceServerUserContext resourceServerUserContext;
     @Mock
     private GSKartResourceServerUser resourceServerUser;
     @Mock
     private CartMapper cartMapper;
-    @Mock
-    private RedisTemplate<String, Object> stringObjectRedisTemplate;
 
     private CartService cartService;
 
     @BeforeEach
     void setUp() {
-        cartService = new CartService(cartCacheRepository, cartDbRepository, kafkaTemplate,
-                resourceServerUserContext, cartMapper, stringObjectRedisTemplate);
+        cartService = new CartService(cartCacheRepository, cartDbRepository, outboxStore,
+                resourceServerUserContext, cartMapper);
         lenient().when(resourceServerUserContext.getGskartResourceServerUser()).thenReturn(resourceServerUser);
         lenient().when(resourceServerUser.getUsername()).thenReturn("cart-user");
-        lenient().when(kafkaTemplate.send(any(ProducerRecord.class)))
-                .thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
     }
 
     private ProductItem productItem(int id) {
@@ -101,25 +93,11 @@ class CartServiceTest {
         assertThat(result.getDeliveryDetails().get(0).getProductIds()).containsExactly(1);
 
         verify(cartCacheRepository).save(cart);
-        ArgumentCaptor<ProducerRecord> captor = ArgumentCaptor.forClass(ProducerRecord.class);
-        verify(kafkaTemplate).send(captor.capture());
-        assertThat(captor.getValue().topic()).isEqualTo("cart.update");
-        assertThat(captor.getValue().key()).isEqualTo(result.getId());
-        assertThat(captor.getValue().value()).isEqualTo(result);
-    }
-
-    @Test
-    void addNewCart_logsAndContinues_whenKafkaSendFails() {
-        Cart cart = cartWithProducts();
-        cart.setId(null);
-        when(cartCacheRepository.save(any(Cart.class))).thenAnswer(inv -> inv.getArgument(0));
-        CompletableFuture<SendResult<String, Object>> failedFuture = new CompletableFuture<>();
-        failedFuture.completeExceptionally(new RuntimeException("kafka unavailable"));
-        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(failedFuture);
-
-        Cart result = cartService.addNewCart(cart);
-
-        assertThat(result.getId()).isNotNull();
+        ArgumentCaptor<DomainEvent> captor = ArgumentCaptor.forClass(DomainEvent.class);
+        verify(outboxStore).append(captor.capture());
+        assertThat(captor.getValue().getDestination()).isEqualTo("cart.update");
+        assertThat(captor.getValue().getKey()).isEqualTo(result.getId());
+        assertThat(captor.getValue().getPayload()).isEqualTo(result);
     }
 
     @Test
@@ -322,7 +300,7 @@ class CartServiceTest {
         assertThat(cart.getProductItems()).hasSize(1);
         assertThat(cart.getProductItems().get(0).getProductName()).isEqualTo("Updated Widget");
         assertThat(cart.getStatus()).isEqualTo(CartStatus.APPENDED);
-        verify(kafkaTemplate).send(any(ProducerRecord.class));
+        verify(outboxStore).append(any(DomainEvent.class));
     }
 
     @Test
@@ -573,10 +551,10 @@ class CartServiceTest {
 
         assertThat(resultId).isEqualTo("cart-1");
         assertThat(cart.getStatus()).isEqualTo(CartStatus.CHECKED_OUT);
-        // one publish for saveCartInDb (cart.update), one for placeOrder (order.place)
-        ArgumentCaptor<ProducerRecord> captor = ArgumentCaptor.forClass(ProducerRecord.class);
-        verify(kafkaTemplate, times(2)).send(captor.capture());
-        assertThat(captor.getAllValues()).extracting(ProducerRecord::topic)
+        // one outbox event for saveCartInDb (cart.update), one for placeOrder (order.place)
+        ArgumentCaptor<DomainEvent> captor = ArgumentCaptor.forClass(DomainEvent.class);
+        verify(outboxStore, times(2)).append(captor.capture());
+        assertThat(captor.getAllValues()).extracting(DomainEvent::getDestination)
                 .containsExactlyInAnyOrder("cart.update", "order.place");
     }
 
@@ -681,27 +659,8 @@ class CartServiceTest {
                 .hasMessageContaining("Billing contacts missing in delivery details ids: 1, 2");
     }
 
-    @Test
-    void checkout_updatesOrderToCouldNotPlaceOrder_whenOrderPlaceKafkaSendFails() throws Exception {
-        Cart cart = checkoutReadyCart();
-        when(cartCacheRepository.findById("cart-1")).thenReturn(Optional.of(cart));
-        when(cartCacheRepository.save(any(Cart.class))).thenAnswer(inv -> inv.getArgument(0));
-        com.gskart.cart.DTOs.orderService.requests.OrderRequest orderRequest =
-                new com.gskart.cart.DTOs.orderService.requests.OrderRequest();
-        orderRequest.setCartId("cart-1");
-        when(cartMapper.cartRedisEntityToOrderRequest(cart)).thenReturn(orderRequest);
-        CompletableFuture<SendResult<String, Object>> failedFuture = new CompletableFuture<>();
-        failedFuture.completeExceptionally(new RuntimeException("kafka unavailable"));
-        when(kafkaTemplate.send(argThat((ProducerRecord<String, Object> record) -> "order.place".equals(record.topic()))))
-                .thenReturn(failedFuture);
-
-        cartService.checkout("cart-1");
-
-        assertThat(cart.getOrderDetails().getOrderStatus()).isEqualTo(OrderStatus.COULD_NOT_PLACE_ORDER);
-    }
-
     // ---- updateOrderDetails / updatePaymentDetails ----
-    // These run on Kafka consumer / producer-callback threads (no request-scoped user), so they take
+    // These run on background messaging threads (no request-scoped user), so they take
     // modifiedBy explicitly rather than reading GSKartResourceServerUserContext.
 
     @Test
@@ -793,5 +752,27 @@ class CartServiceTest {
 
         assertThat(result.getPaymentDetails().getPaymentId()).isEqualTo(55);
         assertThat(result.getPaymentDetails().getPaymentStatus()).isEqualTo(PaymentStatus.COMPLETED);
+    }
+
+    // ---- getCartForSystem (background reads, no ownership check) ----
+
+    @Test
+    void getCartForSystem_returnsCart_withoutOwnershipOrUserContext() throws CartNotFoundException {
+        Cart cart = cartWithProducts();
+        cart.setCartUsername("someone-else");
+        when(cartCacheRepository.findById("cart-1")).thenReturn(Optional.of(cart));
+
+        Cart result = cartService.getCartForSystem("cart-1");
+
+        assertThat(result).isEqualTo(cart);
+        verifyNoInteractions(resourceServerUserContext, resourceServerUser);
+    }
+
+    @Test
+    void getCartForSystem_throwsCartNotFoundException_whenMissing() {
+        when(cartCacheRepository.findById("missing")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> cartService.getCartForSystem("missing"))
+                .isInstanceOf(CartNotFoundException.class);
     }
 }

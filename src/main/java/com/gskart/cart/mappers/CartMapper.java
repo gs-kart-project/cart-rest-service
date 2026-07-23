@@ -152,7 +152,7 @@ public class CartMapper {
                             .map(phoneNumber -> {
                                 PhoneNumberDto phoneNumberDto = new PhoneNumberDto();
                                 phoneNumberDto.setNumber(phoneNumber.getNumber());
-                                phoneNumberDto.setType(phoneNumberDto.getType());
+                                phoneNumberDto.setType(phoneNumber.getType() == null ? null : phoneNumber.getType().name());
                                 phoneNumberDto.setCountryCode(phoneNumber.getCountryCode());
                                 return phoneNumberDto;
                             })

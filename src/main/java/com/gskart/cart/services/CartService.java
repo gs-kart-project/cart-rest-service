@@ -10,23 +10,19 @@ import com.gskart.cart.exceptions.DeleteCartException;
 import com.gskart.cart.exceptions.UpdateCartException;
 import com.gskart.cart.kafka.constants.KafkaConstants;
 import com.gskart.cart.mappers.CartMapper;
+import com.gskart.cart.messaging.DomainEvent;
+import com.gskart.cart.messaging.outbox.OutboxStore;
 import com.gskart.cart.redis.entities.Cart;
 import com.gskart.cart.redis.repositories.CartRepository;
 import com.gskart.cart.security.models.GSKartResourceServerUser;
 import com.gskart.cart.security.models.GSKartResourceServerUserContext;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.kafka.clients.producer.ProducerRecord;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.data.mongodb.core.aggregation.BooleanOperators;
-import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
 
 @Slf4j
 @Service
@@ -35,26 +31,21 @@ public class CartService implements ICartService {
 
     private final ICartRepository cartDbRepository;
 
-    private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final OutboxStore outboxStore;
     private final GSKartResourceServerUserContext resourceServerUserContext;
     private final CartMapper cartMapper;
-    private final RedisTemplate<String, Object> stringObjectRedisTemplate;
-
-   /* @Value("${gskart.redis.cart.ttl}")
-    private Integer cartTTLMins;*/
 
     public CartService(
             CartRepository cartCacheRepository,
             @Qualifier("cartDbRepository") ICartRepository cartDbRepository,
-            KafkaTemplate<String, Object> kafkaTemplate,
+            OutboxStore outboxStore,
             GSKartResourceServerUserContext resourceServerUserContext,
-            CartMapper cartMapper, RedisTemplate<String, Object> stringObjectRedisTemplate) {
+            CartMapper cartMapper) {
         this.cartCacheRepository = cartCacheRepository;
         this.cartDbRepository = cartDbRepository;
-        this.kafkaTemplate = kafkaTemplate;
+        this.outboxStore = outboxStore;
         this.resourceServerUserContext = resourceServerUserContext;
         this.cartMapper = cartMapper;
-        this.stringObjectRedisTemplate = stringObjectRedisTemplate;
     }
 
     @Override
@@ -72,7 +63,6 @@ public class CartService implements ICartService {
             deliveryDetails.setProductIds(cart.getProductItems().stream().map(ProductItem::getProductId).toList());
             cart.setDeliveryDetails(new ArrayList<>(){{add(deliveryDetails);}});
         }
-//        cart.setTtl(cartTTLMins);
         Cart savedCart = cartCacheRepository.save(cart);
         saveCartInDb(savedCart);
         return savedCart;
@@ -90,7 +80,6 @@ public class CartService implements ICartService {
                 deliveryDetails.getProductIds().addAll(cart.getProductItems().stream().map(ProductItem::getProductId).toList());
             }
         }
-//        cart.setTtl(cartTTLMins);
         cartCacheRepository.save(cart);
         return true;
     }
@@ -116,7 +105,6 @@ public class CartService implements ICartService {
         cart.setStatus(CartStatus.APPENDED);
         cart.setModifiedBy(requireCurrentUser().getUsername());
         cart.setModifiedOn(OffsetDateTime.now(ZoneOffset.UTC));
-//        cart.setTtl(cartTTLMins);
         Cart savedCart = cartCacheRepository.save(cart);
         saveCartInDb(savedCart);
         return true;
@@ -133,7 +121,6 @@ public class CartService implements ICartService {
         cart.setModifiedBy(requireCurrentUser().getUsername());
         cart.setModifiedOn(OffsetDateTime.now(ZoneOffset.UTC));
         Cart savedCart = cartCacheRepository.save(cart);
-        //        cart.setTtl(cartTTLMins);
         saveCartInDb(savedCart);
         return true;
     }
@@ -190,24 +177,23 @@ public class CartService implements ICartService {
             throw new CartNotFoundException(String.format("Cart doesn't exist for user: %s in both cache and database", username));
         }
         cart = cartMapper.cartDbToCartCacheEntity(cartDbEntityOptional.get());
-        //cart.setTtl(cartTTLMins);
         cart = cartCacheRepository.save(cart);
-        /*long cartTtlSeconds = cartTTLMins * 60*60;
-        stringObjectRedisTemplate.expire(String.format("carts:%s:idx", cart.getId()), Duration.of(cartTTLMins, ChronoUnit.MINUTES));
-        stringObjectRedisTemplate.expire(String.format("carts:cartUsername:%s", cart.getCartUsername()), Duration.of(cartTTLMins, ChronoUnit.MINUTES));*/
         return cart;
     }
 
+    /**
+     * Enqueue the Redis→Mongo write-through as a {@code cart.update} outbox event. Persisting to the
+     * outbox — the same Redis that just stored the cart — instead of publishing to Kafka inline is what
+     * keeps Redis and Mongo from diverging on a broker outage; the outbox relay owns the actual
+     * publish, with retries.
+     */
     private void saveCartInDb(Cart cart){
-        final ProducerRecord<String, Object> cartProducerRecord= new ProducerRecord<>(KafkaConstants.Topic.CART_UPDATE, cart.getId(), cart);
-        CompletableFuture<SendResult<String, Object>> sendResultCompletableFuture = kafkaTemplate.send(cartProducerRecord);
-        sendResultCompletableFuture.whenComplete((result, ex)->{
-            if(ex!=null){
-                log.error("Cart (Id: {}) was not sent to Kafka topic {}.", cart.getId(), KafkaConstants.Topic.CART_UPDATE, ex);
-                return;
-            }
-            log.info("Cart (Id: {}) sent to Kafka topic {} successfully.", cart.getId(), KafkaConstants.Topic.CART_UPDATE);
-        });
+        outboxStore.append(DomainEvent.builder()
+                .destination(KafkaConstants.Topic.CART_UPDATE)
+                .key(cart.getId())
+                .eventType("CART_UPDATE")
+                .payload(cart)
+                .build());
     }
 
     @Override
@@ -384,30 +370,35 @@ public class CartService implements ICartService {
         stringBuilder.append(value);
     }
 
+    /**
+     * Enqueue the checkout as an {@code order.place} outbox event. The relay publishes it and
+     * {@code PlaceOrderHandler} calls order-service, so there is no longer an inline
+     * producer-callback failure path here — a broker outage keeps the event pending in the outbox, and
+     * an order-service outage is handled (COULD_NOT_PLACE_ORDER) by the handler.
+     */
     private void placeOrder(Cart cart){
         OrderRequest orderRequest = cartMapper.cartRedisEntityToOrderRequest(cart);
-        final ProducerRecord<String, Object> placeOrderProducerRecord= new ProducerRecord<>(KafkaConstants.Topic.ORDER_PLACE, orderRequest.getCartId(), orderRequest);
-        CompletableFuture<SendResult<String, Object>> placeOrderFuture = kafkaTemplate.send(placeOrderProducerRecord);
-        placeOrderFuture.whenComplete((result, ex) -> {
-            if(ex != null){
-                log.error("Couldn't place order for cart {}. Error occurred while sending Order Request to Topic {}", cart.getId(), KafkaConstants.Topic.ORDER_PLACE, ex);
-                OrderDetails orderDetails = new OrderDetails();
-                orderDetails.setOrderStatus(OrderStatus.COULD_NOT_PLACE_ORDER);
-                try {
-                    updateOrderDetails(cart.getId(), orderDetails, cart.getCartUsername());
-                } catch (CartNotFoundException e) {
-                    log.error("Failed to update order details for cart {} after order placement failure.", cart.getId(), e);
-                }
-                return;
-            }
-            log.info("Order successfully placed for cart: {}", cart.getId());
-        });
+        outboxStore.append(DomainEvent.builder()
+                .destination(KafkaConstants.Topic.ORDER_PLACE)
+                .key(orderRequest.getCartId())
+                .eventType("ORDER_PLACE")
+                .payload(orderRequest)
+                .build());
     }
 
     /**
-     * Runs on the Kafka producer-callback thread (placeOrder's whenComplete) or the OrderConsumer
-     * listener thread — neither has a request-scoped user, so the caller passes modifiedBy explicitly
-     * (sourced from the order event's placedBy, itself the cart owner at checkout time).
+     * Read a cart without the request-scoped ownership check, for background/messaging threads
+     * (the outbox relay's consumers) that have no authenticated user. Callers must not expose the
+     * result to a user-facing path.
+     */
+    public Cart getCartForSystem(String cartId) throws CartNotFoundException {
+        return findCart(cartId);
+    }
+
+    /**
+     * Runs on a background/messaging thread (the {@code order.place} / {@code cart.update} consumers) —
+     * neither has a request-scoped user, so the caller passes modifiedBy explicitly (sourced from the
+     * order event's placedBy, itself the cart owner at checkout time).
      */
     public Cart updateOrderDetails(String cartId, OrderDetails orderDetails, String modifiedBy) throws CartNotFoundException {
         Cart cart = findCart(cartId);

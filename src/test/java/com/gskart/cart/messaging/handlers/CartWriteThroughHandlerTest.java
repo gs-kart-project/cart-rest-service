@@ -1,41 +1,38 @@
-package com.gskart.cart.kafka.consumers;
+package com.gskart.cart.messaging.handlers;
 
+import com.gskart.cart.data.repositories.ICartRepository;
 import com.gskart.cart.mappers.CartMapper;
 import com.gskart.cart.redis.entities.Cart;
 import com.gskart.cart.redis.repositories.CartRepository;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-class UpdateCartConsumerTest {
+class CartWriteThroughHandlerTest {
 
     @Mock
     private CartMapper cartMapper;
     @Mock
     private CartRepository cartCacheRepository;
     @Mock
-    private com.gskart.cart.data.repositories.CartRepository cartRepository;
+    private ICartRepository cartDbRepository;
 
-    private UpdateCartConsumer updateCartConsumer;
+    private CartWriteThroughHandler handler;
 
     @BeforeEach
     void setUp() {
-        updateCartConsumer = new UpdateCartConsumer(cartMapper, cartCacheRepository, cartRepository);
-    }
-
-    private ConsumerRecord<String, Object> recordWith(Cart cart) {
-        return new ConsumerRecord<>("cart.update", 0, 0, cart.getId(), cart);
+        handler = new CartWriteThroughHandler(cartMapper, cartCacheRepository, cartDbRepository);
     }
 
     @Test
-    void consume_savesToMongoAndBacksMongoIdIntoRedis_whenCartHasNoMongoIdYet() {
+    void handle_savesToMongoAndBacksMongoIdIntoRedis_whenCartHasNoMongoIdYet() {
         Cart cachedCart = new Cart();
         cachedCart.setId("cart-1");
         cachedCart.setMongoObjectId(null);
@@ -46,18 +43,18 @@ class UpdateCartConsumerTest {
 
         com.gskart.cart.data.entities.Cart savedDbEntity = new com.gskart.cart.data.entities.Cart();
         savedDbEntity.setId("mongo-1");
-        when(cartRepository.save(dbEntity)).thenReturn(savedDbEntity);
+        when(cartDbRepository.save(dbEntity)).thenReturn(savedDbEntity);
 
-        updateCartConsumer.consume(recordWith(cachedCart));
+        handler.handle(cachedCart);
 
-        verify(cartRepository).save(dbEntity);
-        verify(cartRepository, never()).update(any());
+        verify(cartDbRepository).save(dbEntity);
+        verify(cartDbRepository, never()).update(any());
         verify(cartCacheRepository).save(cachedCart);
-        org.assertj.core.api.Assertions.assertThat(cachedCart.getMongoObjectId()).isEqualTo("mongo-1");
+        assertThat(cachedCart.getMongoObjectId()).isEqualTo("mongo-1");
     }
 
     @Test
-    void consume_updatesExistingMongoDoc_whenCartAlreadyHasMongoId() {
+    void handle_updatesExistingMongoDoc_whenCartAlreadyHasMongoId() {
         Cart cachedCart = new Cart();
         cachedCart.setId("cart-1");
         cachedCart.setMongoObjectId("mongo-1");
@@ -66,26 +63,26 @@ class UpdateCartConsumerTest {
         dbEntity.setId("mongo-1");
         when(cartMapper.cartCacheToDbEntity(cachedCart)).thenReturn(dbEntity);
 
-        updateCartConsumer.consume(recordWith(cachedCart));
+        handler.handle(cachedCart);
 
-        verify(cartRepository).update(dbEntity);
-        verify(cartRepository, never()).save(any());
+        verify(cartDbRepository).update(dbEntity);
+        verify(cartDbRepository, never()).save(any());
         verify(cartCacheRepository, never()).save(any());
     }
 
     @Test
-    void consume_treatsEmptyMongoId_asNotYetPersisted() {
+    void handle_treatsEmptyMongoId_asNotYetPersisted() {
         Cart cachedCart = new Cart();
         cachedCart.setId("cart-1");
 
         com.gskart.cart.data.entities.Cart dbEntity = new com.gskart.cart.data.entities.Cart();
         dbEntity.setId("");
         when(cartMapper.cartCacheToDbEntity(cachedCart)).thenReturn(dbEntity);
-        when(cartRepository.save(dbEntity)).thenReturn(dbEntity);
+        when(cartDbRepository.save(dbEntity)).thenReturn(dbEntity);
 
-        updateCartConsumer.consume(recordWith(cachedCart));
+        handler.handle(cachedCart);
 
-        verify(cartRepository).save(dbEntity);
-        verify(cartRepository, never()).update(any());
+        verify(cartDbRepository).save(dbEntity);
+        verify(cartDbRepository, never()).update(any());
     }
 }
