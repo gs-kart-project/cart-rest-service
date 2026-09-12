@@ -56,7 +56,6 @@ public class CartService implements ICartService {
         cart.setStatus(CartStatus.CREATED);
         cart.setCartUsername(currentUsername);
         cart.setCreatedBy(currentUsername);
-        // create delivery details
         if(cart.getDeliveryDetails() == null){
             DeliveryDetails deliveryDetails = new DeliveryDetails();
             deliveryDetails.setId((short) 1);
@@ -166,7 +165,7 @@ public class CartService implements ICartService {
                     .findFirst().orElse(null);
         }
 
-        // In case Cart does not exist in cart, the user will check in Db.
+        // Cache miss - fall back to Mongo before giving up.
         if(cart != null){
             return cart;
         }
@@ -181,12 +180,9 @@ public class CartService implements ICartService {
         return cart;
     }
 
-    /**
-     * Enqueue the Redis→Mongo write-through as a {@code cart.update} outbox event. Persisting to the
-     * outbox — the same Redis that just stored the cart — instead of publishing to Kafka inline is what
-     * keeps Redis and Mongo from diverging on a broker outage; the outbox relay owns the actual
-     * publish, with retries.
-     */
+    // Queues the Redis→Mongo write-through as a cart.update event instead of hitting Kafka directly
+    // — if Kafka's down we don't want Redis and Mongo drifting apart. The outbox relay does the
+    // actual publish (with retries).
     private void saveCartInDb(Cart cart){
         outboxStore.append(DomainEvent.builder()
                 .destination(KafkaConstants.Topic.CART_UPDATE)
@@ -290,31 +286,17 @@ public class CartService implements ICartService {
         return true;
     }
 
-    /*
-    Todo Checkout flow
-    checkout - Initiate payment
-    Once payment is success ->
-        1. Update payment id cart.
-        2. Create a new order.
-    If Payment fails
-        1. Update payment status in Cart
-    Once create new order is success
-        1. Update cart with order details
-     */
     @Override
     public String checkout(String cartId) throws CartNotFoundException, UpdateCartException {
         Cart cart = getCartById(cartId);
-        // At least 1 product should exist in the cart
         if(cart.getProductItems() == null || cart.getProductItems().isEmpty()){
             throw new UpdateCartException(String.format("Cart %s cannot be checked out as there are no products selected", cartId));
         }
 
-        // Delivery details must be present
         if(cart.getDeliveryDetails() == null || cart.getDeliveryDetails().isEmpty()){
             throw new UpdateCartException(String.format("Cart %s cannot be checked out. Delivery details are not updated", cartId));
         }
 
-        // Check if Billing and Shipping contacts have been updated
         StringBuilder billingContactsMissingIds = new StringBuilder();
         StringBuilder shippingContactsMissingIds = new StringBuilder();
         StringBuilder productIdsMissingIds = new StringBuilder();
@@ -354,10 +336,8 @@ public class CartService implements ICartService {
         cart.setModifiedBy(requireCurrentUser().getUsername());
         cart.setModifiedOn(OffsetDateTime.now(ZoneOffset.UTC));
         cartCacheRepository.save(cart);
-        // Save cart in Db (Kafka)
         saveCartInDb(cart);
 
-        // Place Order (Order service call via Kafka topic)
         placeOrder(cart);
 
         return cart.getId();
@@ -370,12 +350,9 @@ public class CartService implements ICartService {
         stringBuilder.append(value);
     }
 
-    /**
-     * Enqueue the checkout as an {@code order.place} outbox event. The relay publishes it and
-     * {@code PlaceOrderHandler} calls order-service, so there is no longer an inline
-     * producer-callback failure path here — a broker outage keeps the event pending in the outbox, and
-     * an order-service outage is handled (COULD_NOT_PLACE_ORDER) by the handler.
-     */
+    // Queues checkout as an order.place event — the relay publishes it and PlaceOrderHandler calls
+    // order-service. A broker hiccup just leaves this pending in the outbox, and an order-service
+    // outage is handled by the handler (COULD_NOT_PLACE_ORDER).
     private void placeOrder(Cart cart){
         OrderRequest orderRequest = cartMapper.cartRedisEntityToOrderRequest(cart);
         outboxStore.append(DomainEvent.builder()

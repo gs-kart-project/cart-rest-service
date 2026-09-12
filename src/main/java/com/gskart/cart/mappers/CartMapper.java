@@ -102,8 +102,6 @@ public class CartMapper {
                             .toList());
         }
 
-        // Check and add payment details if required
-
         if (cart.getDeliveryDetails() != null) {
             List<DeliveryDetailDto> deliveryDetailDtos =
                     cart.getDeliveryDetails().stream()

@@ -4,11 +4,8 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.ToString;
 
-/**
- * Transport-agnostic outbound event. Carries the destination (logical topic), a partition/ordering
- * key, a semantic event type for logging, and the payload object. The Kafka adapter turns this into a
- * {@code ProducerRecord}; a different broker adapter would map it to that broker's message later.
- */
+// Keeps event publishing broker-agnostic — Kafka turns this into a ProducerRecord today, but a
+// different broker adapter could reuse it later without touching callers.
 @Getter
 @Builder
 @ToString

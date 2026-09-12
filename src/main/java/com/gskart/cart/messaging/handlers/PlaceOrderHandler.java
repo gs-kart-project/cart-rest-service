@@ -19,20 +19,11 @@ import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
 
-/**
- * Places the order for a checked-out cart by calling order-service, then writes the outcome back onto
- * the cart. Kafka-free (the {@code OrderPlaceListener} adapter feeds it). Triggered by an
- * {@code order.place} event.
- *
- * <p>Runs on a background thread with no request-scoped user, so it passes {@code modifiedBy}
- * explicitly (the cart owner, carried on {@link OrderRequest#getPlacedBy()}).
- *
- * <p>A failed order-service call is caught and recorded as {@link OrderStatus#COULD_NOT_PLACE_ORDER}
- * on the cart rather than thrown, so the listener does not propagate and trigger an indefinite Kafka
- * retry storm. Idempotent: if the cart is already {@code ORDER_PLACED}, an at-least-once redelivery is
- * skipped instead of placing a second order. (Circuit-breaker/timeout tuning is left for a later
- * change.)
- */
+// Calls order-service for a checked-out cart and writes the result back onto the cart. Runs on a
+// background thread with no logged-in user, so we pass modifiedBy explicitly — it's the cart owner
+// from OrderRequest.placedBy. If the call fails we just record COULD_NOT_PLACE_ORDER instead of
+// throwing, so Kafka doesn't retry forever, and if the cart's already ORDER_PLACED we skip so a
+// redelivery doesn't double-place.
 @Slf4j
 @Component
 public class PlaceOrderHandler {
