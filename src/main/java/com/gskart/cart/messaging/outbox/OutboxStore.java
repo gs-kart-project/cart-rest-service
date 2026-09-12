@@ -4,16 +4,11 @@ import com.gskart.cart.messaging.DomainEvent;
 
 import java.util.List;
 
-/**
- * Transactional-outbox store. A cart mutation persists its outbound event here — into the same Redis
- * that holds the cart — instead of publishing to Kafka inline, so a failed broker can no longer
- * diverge Redis from Mongo (the pre-outbox bug). A relay drains it to the broker with at-least-once
- * delivery.
- *
- * <p>Entries are held in a time-ordered queue: each carries a "not before" time, so a failed publish
- * can be rescheduled for a later retry (exponential backoff) rather than hammered every tick. After a
- * bounded number of failed attempts the entry is dead-lettered instead of retried forever.
- */
+// Outbox for cart mutations — an event gets written here (same Redis as the cart) instead of going
+// straight to Kafka, so a broker outage can't leave Redis and Mongo out of sync. A relay drains it
+// with at-least-once delivery. Entries carry a "not before" time so a failed publish can back off
+// and retry instead of hammering every tick; after enough failed attempts we give up and
+// dead-letter it.
 public interface OutboxStore {
     /** Persist an event as a pending outbox entry, eligible to publish immediately. */
     void append(DomainEvent event);

@@ -12,12 +12,9 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-/**
- * Kafka adapter for the {@link DomainEventPublisher} port. Wraps the existing {@link KafkaTemplate}
- * and publishes <em>synchronously</em>: it blocks on the send future so the outbox relay learns
- * success/failure before it acks the outbox entry. The value serializer's {@code TYPE_MAPPINGS} (see
- * {@code KafkaConfig}) still governs how the payload lands on the wire.
- */
+// Kafka side of DomainEventPublisher. Publishes synchronously (blocks on the send future) so the
+// outbox relay knows success/failure before acking the entry. Wire format is still driven by
+// KafkaConfig's TYPE_MAPPINGS.
 @Slf4j
 @Component
 public class KafkaDomainEventPublisher implements DomainEventPublisher {

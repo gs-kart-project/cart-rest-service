@@ -8,13 +8,10 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 
-/**
- * Drains the {@link OutboxStore} to the broker. On a fixed schedule it claims the entries whose retry
- * time has arrived, publishes each through the {@link DomainEventPublisher} port, and acks it. A failed
- * publish is retried with exponential backoff up to a bounded number of attempts; once those are
- * exhausted the entry is dead-lettered rather than retried forever. Consumers are idempotent, so the
- * occasional redelivery this at-least-once scheme produces is harmless.
- */
+// Runs on a schedule, grabs whatever's due from the outbox, and publishes it. A failed publish
+// backs off exponentially and retries; once we're out of attempts we dead-letter it instead of
+// retrying forever. That's safe because consumers are idempotent — an occasional duplicate
+// delivery doesn't hurt.
 @Slf4j
 @Component
 public class OutboxRelay {

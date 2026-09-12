@@ -93,7 +93,6 @@ public class CartController {
     }
 
     @PutMapping("/{cartId}/contacts")
-    // Endpoint to add contact
     public ResponseEntity<Boolean> updateContact(@PathVariable String cartId, @RequestBody ContactRequest contactRequest){
         try {
             Contact contact = cartMapper.contactRequestToContact(contactRequest);

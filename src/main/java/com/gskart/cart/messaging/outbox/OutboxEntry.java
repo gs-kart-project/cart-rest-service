@@ -4,11 +4,8 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-/**
- * A persisted, not-yet-published event in the Redis outbox. Stores the {@code DomainEvent}'s routing
- * fields plus the payload as JSON + its concrete type so the relay can faithfully reconstruct and
- * publish it. Serialized to/from JSON as the element stored in the Redis queue.
- */
+// One pending event in the Redis outbox. Payload's stored as a JSON string plus its class name so
+// the relay can rebuild the real object before publishing.
 @Data
 @NoArgsConstructor
 @AllArgsConstructor

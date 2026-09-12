@@ -8,13 +8,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
-/**
- * Write-through of a cached cart into Mongo (the system of record), triggered by a {@code cart.update}
- * event. Kafka-free so it is unit-testable without a broker; the {@code CartUpdateListener} adapter
- * feeds it. Idempotent by construction: a first sighting inserts and back-fills the Mongo id into
- * Redis; subsequent sightings update the existing document, so an at-least-once redelivery from the
- * outbox relay is harmless.
- */
+// Write-through from Redis to Mongo on a cart.update event — kept Kafka-free so it's testable
+// without a broker. Safe to run twice: first time inserts into Mongo and backfills the id into
+// Redis, later runs just update Mongo — that's what makes at-least-once redelivery harmless.
 @Slf4j
 @Component
 public class CartWriteThroughHandler {

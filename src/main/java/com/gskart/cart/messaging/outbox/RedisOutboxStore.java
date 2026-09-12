@@ -15,18 +15,9 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
-/**
- * Redis-backed {@link OutboxStore}. Pending entries live in a sorted set {@code cart:outbox:pending}
- * scored by the epoch-millis time they next become eligible to publish; {@link #claimDue} reads only
- * the entries whose time has arrived. A successful publish removes the entry; a failed one is either
- * re-added with a later score (backoff) or moved to the {@code cart:outbox:dead} list once retries are
- * exhausted. Entries stay in the sorted set until acked, so a crashed relay simply finds them still
- * there on the next run — no separate recovery step is needed.
- *
- * <p>The cart itself lives in this same Redis, so persisting the event here (instead of publishing to
- * Kafka inline) is what closes the pre-outbox divergence bug: a broker outage can no longer leave
- * Redis and Mongo out of step.
- */
+// Backed by a Redis sorted set (cart:outbox:pending) scored by next-eligible time. Success
+// removes the entry; failure reschedules it or, once attempts run out, moves it to
+// cart:outbox:dead. A crashed relay just finds entries still sitting there - no recovery needed.
 @Slf4j
 @Component
 public class RedisOutboxStore implements OutboxStore {

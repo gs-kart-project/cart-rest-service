@@ -32,14 +32,6 @@ public class KafkaConfig {
     @Value("${spring.kafka.bootstrap-servers}")
     private List<String> kafkaBootstrapServers;
 
-    /*
-    public KafkaAdmin kafkaAdmin() {
-        Map<String, Object> configs = new HashMap<>();
-        configs.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaBootstrapServers);
-        return new KafkaAdmin(configs);
-    }
-     */
-
     @Bean("updateCartTopic")
     public NewTopic updateCartTopic() {
         return TopicBuilder.name(KafkaConstants.Topic.CART_UPDATE)
@@ -96,10 +88,7 @@ public class KafkaConfig {
     }
 
 
-    /**
-     * DefaultErrorHandler instance is created with processing attempts of 5 (1 Initials Delivery + 4 retries).
-     * @return DefaultErrorHandler
-     */
+    // Heads up: retries=4 below means 5 total attempts (the first delivery plus 4 retries) before we dead-letter.
     @Bean
     public DefaultErrorHandler defaultErrorHandler(KafkaTemplate<String, Object> kafkaTemplate){
         long interval = 60 * 1000L;
