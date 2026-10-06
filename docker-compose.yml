@@ -1,10 +1,10 @@
-name: gskart-cart                    # local dev infra for cart-rest-service only.
-                                      # Superseded by the centralized docker-compose.infra.yml (D9)
-                                      # once that exists at the gskart/ root.
+# Local dev infra for cart-rest-service only. It brings up cart's own dependencies alone.
+# The centralized docker-compose.infra.yml at the gskart/ root is the source of truth for all the services.
+name: gskart-cart
+
 services:
   mongo:
-    # Pinned to 7.0, not 8.0: MongoDB 8.0's kernel-version gate rejects OrbStack's newer VM kernel
-    # (7.x) with "known incompatibility" (SERVER-121912) even though it runs fine in practice.
+    # Fixing mongo version to 7.0 because 8.0's kernel-version gate rejects OrbStack's (local) newer VM kernel (7.x)
     image: mongo:7.0
     container_name: cart-mongo
     restart: unless-stopped
@@ -39,8 +39,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    # REDISCLI_AUTH is picked up by redis-cli automatically, avoiding the "password on the
-    # command line" warning/exposure that passing it via `-a` causes.
+    # Passing the password via `-a` makes redis-cli warn and leaves it visible in the command line,
+    # so it goes in REDISCLI_AUTH instead, which redis-cli picks up on its own.
     environment:
       REDISCLI_AUTH: ${CART_REDIS_PASSWORD}
 
@@ -59,8 +59,8 @@ services:
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
-      # Broker default (3) can't be satisfied with a single broker, which silently breaks all
-      # consumer-group coordination (__consumer_offsets never gets created) - single-node dev only.
+      # Only one replica is possible with a single broker, so the offsets topic is set to 1.
+      # At the default (3), __consumer_offsets is never created and consumer groups stop coordinating.
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
     volumes:
       - cart-kafka-data:/var/lib/kafka/data
