@@ -40,7 +40,7 @@ services:
       timeout: 5s
       retries: 5
     # Passing the password via `-a` makes redis-cli warn and leaves it visible in the command line,
-    # so it goes in REDISCLI_AUTH instead, which redis-cli picks up on its own.
+    # REDISCLI_AUTH is the recommended way to pass the password to redis-cli.
     environment:
       REDISCLI_AUTH: ${CART_REDIS_PASSWORD}
 
@@ -60,7 +60,6 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
       # Only one replica is possible with a single broker, so the offsets topic is set to 1.
-      # At the default (3), __consumer_offsets is never created and consumer groups stop coordinating.
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
     volumes:
       - cart-kafka-data:/var/lib/kafka/data
